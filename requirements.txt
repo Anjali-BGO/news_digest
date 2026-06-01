@@ -1,0 +1,17 @@
+mysql-connector-python
+openai
+tavily-python
+flask
+openpyxl
+python-dotenv
+requests
+fuzzywuzzy
+python-Levenshtein
+fastapi
+uvicorn[standard]
+jinja2
+python-multipart
+httpx
+pandas
+scikit-learn
+pandas-stubs

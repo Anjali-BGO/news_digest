@@ -1,0 +1,8 @@
+name,type,website,industry_type,news_scope,topics
+Apple Inc.,client,https://apple.com,,,Company Finances & Results;Digital Transformation & AI
+Tesla Inc.,client,https://tesla.com,,,New Technologies & AI Adoption;Expansion Collaborations & Strategic Alliances
+Stripe,prospect,https://stripe.com,,,Regulatory Developments & RFP / RFI Announcements;Company Finances & Results
+Notion,prospect,https://notion.so,,,New Projects / Initiatives;Digital Transformation & AI
+Fintech,industry,,Financial Services,"Regulatory changes, payment innovations, digital banking",Regulatory Developments & RFP / RFI Announcements;Digital Transformation & AI
+Electric Vehicles,industry,,Automotive & EV,"EV adoption, battery technology, charging infrastructure",New Technologies & AI Adoption;Infrastructure Projects & Initiatives
+Healthcare IT,industry,,Healthcare & Life Sciences,"Digital health, patient data, NHS/provider IT spend",Digital Transformation & AI;Compliance Monitoring

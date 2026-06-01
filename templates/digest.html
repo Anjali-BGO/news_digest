@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block title %}Digest — News Digest{% endblock %}
+{% block page_title %}News Digest{% endblock %}
+
+{% block topbar_right %}
+{% if all_periods %}
+<div style="display:flex;align-items:center;gap:5px">
+  <i class="ti ti-calendar" style="font-size:12px;color:#0F766E"></i>
+  <select onchange="window.location='/digest?tab={{ active_tab }}&period='+encodeURIComponent(this.value)"
+    style="font-size:11px;background:#E8FAF8;border:0.5px solid #99F6E4;color:#0F766E;
+      padding:4px 10px;border-radius:7px;font-weight:500;font-family:inherit;
+      cursor:pointer;max-width:240px">
+    {% for p in all_periods %}
+    <option value="{{ p }}" {% if p == selected_period %}selected{% endif %}>{{ p }}</option>
+    {% endfor %}
+  </select>
+</div>
+{% elif window %}
+<span style="font-size:11px;background:#E8FAF8;border:0.5px solid #99F6E4;color:#0F766E;padding:4px 10px;border-radius:7px;font-weight:500">
+  <i class="ti ti-calendar" style="font-size:12px;vertical-align:-2px;margin-right:4px"></i>{{ window.label }}
+</span>
+{% endif %}
+<a href="/export/excel" style="font-size:12px;font-weight:600;padding:6px 12px;border-radius:7px;background:linear-gradient(90deg,#0F766E,#0D9488);color:#fff;text-decoration:none;display:flex;align-items:center;gap:5px;box-shadow:0 2px 6px rgba(13,148,136,0.25)">
+  <i class="ti ti-download" style="font-size:13px"></i>Export Excel
+</a>
+{% endblock %}
+
+{% block content %}
+
+{% if gap_report and gap_report.no_news_at_all %}
+<div style="margin-bottom:14px;padding:9px 14px;border-radius:8px;font-size:12px;display:flex;align-items:center;justify-content:space-between;background:#FFFBEB;border:0.5px solid #FCD34D;color:#92400E">
+  <span><i class="ti ti-alert-triangle" style="font-size:14px;vertical-align:-2px;margin-right:6px"></i>
+  <strong>{{ gap_report.no_news_at_all|length }} entities</strong> returned no news this period.
+  <a href="/gaps" style="color:#2563EB;margin-left:6px;text-decoration:none;font-weight:600">View Gap Report →</a></span>
+</div>
+{% endif %}
+
+<!-- Tabs -->
+<div style="display:flex;gap:4px;margin-bottom:14px;border-bottom:1px solid #D4DAE8;padding-bottom:0">
+  {% for tab_id, label, count, color, light, mid in [
+    ("client",   "Clients",    clients|length,    "#1E40AF", "#EFF6FF", "#BFDBFE"),
+    ("prospect", "Prospects",  prospects|length,  "#0F766E", "#E8FAF8", "#99F6E4"),
+    ("industry", "Industries", industries|length, "#5B21B6", "#F5F3FF", "#C4B5FD")
+  ] %}
+  <a href="/digest?tab={{ tab_id }}"
+    style="padding:8px 16px;font-size:13px;font-weight:600;border-radius:7px 7px 0 0;text-decoration:none;margin-bottom:-1px;border:1px solid transparent;
+    {% if active_tab == tab_id %}
+      background:{{ light }};color:{{ color }};border-color:{{ mid }};border-bottom-color:{{ light }};
+    {% else %}
+      color:#94A3B8;
+    {% endif %}">
+    {{ label }} <span style="font-size:11px;font-weight:400;margin-left:4px;opacity:0.7">({{ count }})</span>
+  </a>
+  {% endfor %}
+</div>
+
+{% set active_list = clients if active_tab == 'client' else (prospects if active_tab == 'prospect' else industries) %}
+{% set tab_color   = "#1E40AF" if active_tab == 'client' else ("#0F766E" if active_tab == 'prospect' else "#5B21B6") %}
+{% set tab_light   = "#EFF6FF" if active_tab == 'client' else ("#E8FAF8" if active_tab == 'prospect' else "#F5F3FF") %}
+{% set tab_mid     = "#BFDBFE" if active_tab == 'client' else ("#99F6E4" if active_tab == 'prospect' else "#C4B5FD") %}
+{% set tab_acc     = "#2563EB" if active_tab == 'client' else ("#0D9488" if active_tab == 'prospect' else "#7C3AED") %}
+
+{% if active_list %}
+  {% for item in active_list %}
+  <div style="background:#fff;border-radius:10px;border:0.5px solid #D4DAE8;overflow:hidden;margin-bottom:12px;box-shadow:0 2px 6px rgba(0,0,0,0.05)">
+    <div style="padding:10px 16px;background:{{ tab_light }};border-bottom:0.5px solid {{ tab_mid }}">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="width:3px;height:14px;border-radius:99px;background:{{ tab_acc }};flex-shrink:0"></div>
+          <span style="font-size:14px;font-weight:700;color:{{ tab_color }}">{{ item.entity.name }}</span>
+          <span style="font-size:11px;color:#94A3B8">{{ item.news|length }} article{{ 's' if item.news|length != 1 }}</span>
+          {% if active_tab != 'industry' and item.entity.website %}
+          <a href="{{ item.entity.website }}" target="_blank" rel="noopener"
+            style="font-size:10px;color:{{ tab_color }};opacity:0.6;text-decoration:none;
+              display:inline-flex;align-items:center;gap:3px;border:0.5px solid {{ tab_mid }};
+              padding:1px 7px;border-radius:99px;background:{{ tab_light }}">
+            <i class="ti ti-external-link" style="font-size:9px"></i>
+            {{ item.entity.website | replace('https://', '') | replace('http://', '') }}
+          </a>
+          {% endif %}
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          {% if active_tab == 'industry' and item.entity.industry_type %}
+          <span style="font-size:10px;background:#EDE9FE;color:#5B21B6;border:0.5px solid #C4B5FD;padding:2px 8px;border-radius:99px;font-weight:700">{{ item.entity.industry_type }}</span>
+          {% endif %}
+          {% for t in item.entity.topics %}
+          <span style="font-size:10px;background:{{ tab_light }};color:{{ tab_color }};border:0.5px solid {{ tab_mid }};padding:2px 7px;border-radius:99px;font-weight:600">{{ t }}</span>
+          {% endfor %}
+        </div>
+      </div>
+      {% if active_tab == 'industry' and item.entity.news_scope %}
+      <div style="font-size:11px;color:#64748B;margin-top:5px;padding-left:11px;line-height:1.4">
+        <i class="ti ti-notes" style="font-size:10px;vertical-align:-1px;margin-right:3px;color:#94A3B8"></i>{{ item.entity.news_scope }}
+      </div>
+      {% endif %}
+    </div>
+
+    {% if item.news %}
+    <div>
+      {% for n in item.news %}
+      <div style="padding:12px 16px;border-bottom:0.5px solid #F8FAFC{% if loop.last %};border-bottom:none{% endif %}">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:4px">
+          <a href="{{ n.url }}" target="_blank" rel="noopener"
+            style="font-size:13px;font-weight:600;text-decoration:none;line-height:1.4;flex:1;
+              color:{% if n.url_status in ('invalid', 'unknown') %}#94A3B8{% else %}#2563EB{% endif %}">
+            {{ n.title }}
+          </a>
+          <span style="font-size:11px;color:#94A3B8;white-space:nowrap;flex-shrink:0">{{ n.published_date }}</span>
+        </div>
+        <p style="font-size:12px;color:#475569;line-height:1.55;margin-bottom:6px">{{ n.summary }}</p>
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          {% if n.primary_category %}
+          <span style="font-size:10px;background:#F1F5F9;color:#334155;padding:2px 7px;border-radius:99px;font-weight:600">{{ n.primary_category }}</span>
+          {% endif %}
+          {% if n.secondary_category %}
+          <span style="font-size:10px;background:#F1F5F9;color:#334155;padding:2px 7px;border-radius:99px">{{ n.secondary_category }}</span>
+          {% endif %}
+          <span style="font-size:11px;color:#94A3B8">{{ n.source }}</span>
+          {% if n.paywall_note %}
+          <span style="font-size:10px;background:#FFFBEB;color:#92400E;border:0.5px solid #FCD34D;padding:2px 7px;border-radius:99px">⚠ Subscription source</span>
+          {% endif %}
+          {% if n.url_status in ('invalid', 'unknown') %}
+          <span style="font-size:10px;background:#FFF0F6;color:#BE185D;border:0.5px solid #FBCFE8;padding:2px 7px;border-radius:99px">⚠ Link may be broken</span>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div style="padding:20px 16px;text-align:center;font-size:12px;color:#94A3B8;font-style:italic">
+      No news fetched yet — run a fetch from the Entities page.
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+{% else %}
+<div style="text-align:center;padding:60px 20px;color:#94A3B8">
+  <i class="ti ti-inbox" style="font-size:40px;display:block;margin-bottom:12px"></i>
+  <p style="font-size:14px;font-weight:600;margin-bottom:4px">No entities here yet.</p>
+  <a href="/" style="font-size:12px;color:#2563EB;text-decoration:none">Add some on the Entities page →</a>
+</div>
+{% endif %}
+{% endblock %}

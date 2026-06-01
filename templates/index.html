@@ -1,0 +1,580 @@
+{% extends "base.html" %}
+{% block title %}Entities — News Digest{% endblock %}
+{% block page_title %}Entity Manager{% endblock %}
+
+{% block topbar_right %}
+<span style="font-size:11px;font-weight:600;padding:4px 11px;border-radius:7px;background:#EFF6FF;color:#1E40AF;border:0.5px solid #BFDBFE;display:flex;align-items:center;gap:5px">
+  <span style="font-size:13px;font-weight:700">{{ clients|length }}</span> Clients
+</span>
+<span style="font-size:11px;font-weight:600;padding:4px 11px;border-radius:7px;background:#E8FAF8;color:#0F766E;border:0.5px solid #99F6E4;display:flex;align-items:center;gap:5px">
+  <span style="font-size:13px;font-weight:700">{{ prospects|length }}</span> Prospects
+</span>
+<span style="font-size:11px;font-weight:600;padding:4px 11px;border-radius:7px;background:#F5F3FF;color:#5B21B6;border:0.5px solid #C4B5FD;display:flex;align-items:center;gap:5px">
+  <span style="font-size:13px;font-weight:700">{{ industries|length }}</span> Industries
+</span>
+{% endblock %}
+
+{% block content %}
+<style>
+  .page-content { padding: 8px 16px !important; }
+
+  /* 3-col grid — locks to viewport height; each column scrolls independently */
+  .em-wrap {
+    display: grid;
+    grid-template-columns: 270px 310px 1fr;
+    gap: 14px;
+    height: 100%;
+  }
+
+  /* each column is a flex column; scrolls if content overflows its height */
+  .em-col {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-height: 0;
+    overflow-y: auto;
+  }
+  .em-col::-webkit-scrollbar { width: 4px; }
+  .em-col::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.14); border-radius:99px; }
+  .em-col::-webkit-scrollbar-track { background: transparent; }
+
+  /* card base — clips content so it never bleeds into adjacent columns */
+  .card {
+    border-radius: 10px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* thin inner scrollbar */
+  .iscroll {
+    overflow-y: auto;
+    min-height: 0;
+  }
+  .iscroll::-webkit-scrollbar { width: 4px; }
+  .iscroll::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.16); border-radius:99px; }
+  .iscroll::-webkit-scrollbar-track { background: transparent; }
+
+  /* card icon header row */
+  .card-hd {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 10px;
+    flex-shrink: 0;
+  }
+  .card-ic {
+    width: 22px; height: 22px;
+    border-radius: 5px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .card-ic i { font-size: 12px; }
+  .card-lbl {
+    font-size: 10px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.08em;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  /* form field */
+  .fld { margin-bottom: 0; flex-shrink: 0; }
+  .fld label { font-size: 11px; font-weight: 600; display: block; margin-bottom: 3px; }
+  .fld input, .fld select {
+    width: 100%; border-radius: 6px;
+    padding: 6px 9px; font-size: 12px;
+    font-family: var(--f); color: #0F172A; background: #fff;
+  }
+
+  /* primary button */
+  .btn-primary {
+    flex-shrink: 0;
+    color: #fff; font-size: 12px; font-weight: 600;
+    padding: 9px 10px; border-radius: 7px;
+    border: none; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; gap: 5px;
+    width: 100%; font-family: var(--f);
+  }
+  .btn-primary i { font-size: 13px; }
+
+  /* entity table header */
+  .tbl-hd {
+    padding: 9px 14px;
+    display: flex; align-items: center; gap: 8px;
+    border-bottom: 0.5px solid #D4DAE8;
+    flex-shrink: 0;
+  }
+  .tbl-acc { width: 3px; height: 13px; border-radius: 99px; flex-shrink: 0; }
+  .tbl-lbl { font-size: 13px; font-weight: 700; }
+  .tbl-cnt {
+    font-size: 10px; color: #94A3B8;
+    background: #F1F5F9; padding: 2px 7px;
+    border-radius: 99px; border: 0.5px solid #D4DAE8;
+  }
+</style>
+
+<!-- Flash messages -->
+{% if msg %}
+<div data-flash style="margin-bottom:10px;padding:8px 14px;border-radius:8px;font-size:12px;display:flex;align-items:center;justify-content:space-between;
+  {% if msg == 'added' or (msg == 'upload' and not error) %}background:#F0FDF4;border:0.5px solid #86EFAC;color:#14532D
+  {% elif msg == 'deleted' %}background:#FFF0F6;border:0.5px solid #FBCFE8;color:#831843
+  {% else %}background:#FFFBEB;border:0.5px solid #FCD34D;color:#92400E{% endif %}">
+  <span>
+    {% if msg == 'added' %}<i class="ti ti-circle-check" style="font-size:13px;vertical-align:-2px;margin-right:6px"></i><strong>{{ msg_name }}</strong> added successfully.
+    {% elif msg == 'duplicate' %}<i class="ti ti-alert-triangle" style="font-size:13px;vertical-align:-2px;margin-right:6px"></i><strong>{{ msg_name }}</strong> already exists. No duplicate created.
+    {% elif msg == 'deleted' %}<i class="ti ti-trash" style="font-size:13px;vertical-align:-2px;margin-right:6px"></i><strong>{{ msg_name }}</strong> deleted.
+    {% elif msg == 'already_running' %}<i class="ti ti-alert-triangle" style="font-size:13px;vertical-align:-2px;margin-right:6px"></i>A fetch is already running.
+    {% elif msg == 'upload' %}
+      {% if error == 'no_file' %}<i class="ti ti-alert-triangle" style="font-size:13px;vertical-align:-2px;margin-right:6px"></i>No file selected.
+      {% elif error == 'bad_format' %}<i class="ti ti-alert-triangle" style="font-size:13px;vertical-align:-2px;margin-right:6px"></i>Unsupported format. Use .csv, .xlsx or .xls.
+      {% elif error == 'empty' %}<i class="ti ti-alert-triangle" style="font-size:13px;vertical-align:-2px;margin-right:6px"></i>File is empty.
+      {% elif error == 'parse' %}<i class="ti ti-x" style="font-size:13px;vertical-align:-2px;margin-right:6px"></i>Could not read the file.
+      {% else %}<i class="ti ti-circle-check" style="font-size:13px;vertical-align:-2px;margin-right:6px"></i>Upload complete — <strong>{{ msg_added }} added</strong>{% if msg_skipped %} · {{ msg_skipped }} skipped{% endif %}{% if msg_invalid %} · {{ msg_invalid }} invalid{% endif %}
+      {% endif %}
+    {% endif %}
+  </span>
+  <button onclick="this.parentElement.remove()" style="background:none;border:none;cursor:pointer;opacity:0.4;font-size:13px;margin-left:10px">✕</button>
+</div>
+{% endif %}
+
+<!-- MAIN GRID -->
+<div class="em-wrap">
+
+  <!-- ════ COL 1: Stats + Fetch News + Bulk Upload ════ -->
+  <div class="em-col">
+
+    <!-- Total articles collected — compact stat banner (light) -->
+    <div style="background:linear-gradient(135deg,#EFF6FF,#E0F2FE);border:1px solid #BFDBFE;
+      border-radius:10px;padding:10px 14px;flex-shrink:0;display:flex;align-items:center;gap:12px;
+      box-shadow:0 2px 6px rgba(37,99,235,0.08)">
+      <div style="width:36px;height:36px;background:#DBEAFE;border-radius:8px;
+        flex-shrink:0;display:flex;align-items:center;justify-content:center">
+        <i class="ti ti-news" style="font-size:17px;color:#2563EB"></i>
+      </div>
+      <div>
+        <div style="font-size:9px;font-weight:600;color:#64748B;letter-spacing:0.09em;text-transform:uppercase">
+          Total Articles Collected
+        </div>
+        <div style="font-size:22px;font-weight:800;color:#1E40AF;line-height:1.15;margin-top:1px">
+          {{ total_news }}
+        </div>
+      </div>
+    </div>
+
+    <!-- Fetch News — date range + fetch all trigger -->
+    <div class="card" style="background:#E8FAF8;border:1px solid #7DE8D8;box-shadow:0 3px 10px rgba(13,148,136,0.12);flex:2;min-height:0">
+      <div class="card-hd">
+        <div class="card-ic" style="background:#A7F3E8"><i class="ti ti-calendar" style="color:#0F766E"></i></div>
+        <span class="card-lbl" style="color:#0F766E">Date Range</span>
+      </div>
+      <form id="fetchForm" method="post" action="/fetch-all-news"
+        style="display:flex;flex-direction:column;gap:9px;flex:1;min-height:0;overflow-y:auto">
+
+        <!-- hidden fields populated by JS on submit -->
+        <input type="hidden" name="period_days" id="hPeriod"/>
+        <input type="hidden" name="date_from"   id="hFrom"/>
+        <input type="hidden" name="date_to"     id="hTo"/>
+
+        <div class="fld">
+          <label style="color:#135E56">Fetch For</label>
+          <select name="entity_type_filter" style="border:0.5px solid #99F6E4">
+            <option value="all">All Entities</option>
+            <option value="client">Clients only</option>
+            <option value="prospect">Prospects only</option>
+            <option value="industry">Industries only</option>
+          </select>
+        </div>
+
+        <!-- API Sources — 2-per-row flex wrap, explicit widths to avoid clip -->
+        <div class="fld">
+          <label style="color:#135E56">News Sources</label>
+          <div style="background:#fff;border:0.5px solid #99F6E4;border-radius:6px;padding:5px 8px;
+            display:flex;flex-wrap:wrap;gap:4px 0">
+            <label title="Deep search" style="width:50%;display:flex;align-items:center;gap:5px;
+              font-size:11px;font-weight:600;color:#0F172A;cursor:pointer;padding:2px 0">
+              <input type="checkbox" name="api_sources" value="tavily" checked
+                style="accent-color:#0D9488;flex-shrink:0;margin:0;width:13px;height:13px">
+              Tavily
+            </label>
+            <label title="Broad coverage" style="width:50%;display:flex;align-items:center;gap:5px;
+              font-size:11px;font-weight:600;color:#0F172A;cursor:pointer;padding:2px 0">
+              <input type="checkbox" name="api_sources" value="gnews"
+                style="accent-color:#0D9488;flex-shrink:0;margin:0;width:13px;height:13px">
+              GNews
+            </label>
+            <label title="Google News via SerpAPI" style="width:50%;display:flex;align-items:center;gap:5px;
+              font-size:11px;font-weight:600;color:#0F172A;cursor:pointer;padding:2px 0">
+              <input type="checkbox" name="api_sources" value="serpapi"
+                style="accent-color:#0D9488;flex-shrink:0;margin:0;width:13px;height:13px">
+              SerpAPI
+            </label>
+            <label title="NewsData.io aggregator" style="width:50%;display:flex;align-items:center;gap:5px;
+              font-size:11px;font-weight:600;color:#0F172A;cursor:pointer;padding:2px 0">
+              <input type="checkbox" name="api_sources" value="newsdata"
+                style="accent-color:#0D9488;flex-shrink:0;margin:0;width:13px;height:13px">
+              NewsData
+            </label>
+          </div>
+        </div>
+
+        <div class="fld">
+          <label style="color:#135E56">Period</label>
+          <select id="periodSelect" onchange="toggleCustom(this.value);updateWindowPreview()"
+            style="border:0.5px solid #99F6E4">
+            <option value="1">Last 1 day</option>
+            <option value="7">Last 7 days</option>
+            <option value="14">Last 14 days</option>
+            <option value="30" selected>Last 30 days</option>
+            <option value="custom">Custom range…</option>
+          </select>
+        </div>
+        <div id="customRange" style="display:none;flex-direction:column;gap:8px">
+          <div class="fld">
+            <label style="color:#135E56">From</label>
+            <input type="date" id="dateFrom" style="border:0.5px solid #99F6E4"
+              onchange="updateWindowPreview()"/>
+          </div>
+          <div class="fld">
+            <label style="color:#135E56">To</label>
+            <input type="date" id="dateTo" style="border:0.5px solid #99F6E4"
+              onchange="updateWindowPreview()"/>
+          </div>
+        </div>
+
+        <!-- Live window preview -->
+        <div id="windowPreview" style="background:rgba(13,148,136,0.07);border:0.5px solid #99F6E4;
+          border-radius:6px;padding:7px 10px;font-size:11px;color:#0F766E;line-height:1.5;flex:1">
+          <div id="wpRange" style="font-weight:600"></div>
+          <div id="wpDays" style="color:#135E56;font-size:10px;margin-top:1px"></div>
+          <div style="font-size:10px;color:#64748B;margin-top:3px">
+            <i class="ti ti-info-circle" style="font-size:10px;vertical-align:-1px"></i>
+            Applied to <strong>Fetch All News</strong>
+          </div>
+        </div>
+
+        <button type="submit" class="btn-primary"
+          style="margin-top:auto;background:linear-gradient(90deg,#0F766E,#0D9488);box-shadow:0 2px 6px rgba(13,148,136,0.3)">
+          <i class="ti ti-player-play"></i>Fetch All News
+        </button>
+      </form>
+    </div>
+
+    <!-- Bulk Upload — compact fixed card -->
+    <div class="card" style="background:linear-gradient(160deg,#FFF0F6,#FCE7F3);border:1px solid #F9A8D4;box-shadow:0 3px 10px rgba(190,24,93,0.11);flex-shrink:0">
+      <div class="card-hd">
+        <div class="card-ic" style="background:#FBCFE8"><i class="ti ti-upload" style="color:#BE185D"></i></div>
+        <span class="card-lbl" style="color:#831843">Bulk Upload</span>
+      </div>
+      <form method="post" action="/upload" enctype="multipart/form-data"
+        style="display:flex;flex-direction:column;gap:8px">
+
+        <!-- compact single-row file pick row -->
+        <div style="border:1.5px dashed #F9A8D4;border-radius:7px;padding:10px 12px;
+          background:rgba(255,255,255,0.7);display:flex;align-items:center;gap:10px">
+          <i class="ti ti-file-spreadsheet" style="font-size:20px;color:#BE185D;flex-shrink:0"></i>
+          <span style="font-size:11px;color:#831843;flex:1">CSV or Excel</span>
+          <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;
+            background:#fff;border:0.5px solid #F9A8D4;border-radius:6px;
+            padding:5px 10px;font-size:11px;font-weight:600;color:#BE185D;
+            font-family:var(--f);white-space:nowrap;flex-shrink:0">
+            <i class="ti ti-paperclip" style="font-size:11px"></i>
+            <span id="fileLabel" style="max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Choose file</span>
+            <input type="file" name="file" accept=".csv,.xlsx,.xls" style="display:none"
+              onchange="document.getElementById('fileLabel').textContent=this.files[0]?this.files[0].name:'Choose file'"/>
+          </label>
+        </div>
+
+        <button type="submit" class="btn-primary"
+          style="background:linear-gradient(90deg,#9D174D,#BE185D);box-shadow:0 2px 6px rgba(157,23,77,0.3)">
+          <i class="ti ti-upload"></i>Upload File
+        </button>
+
+        <a href="/static/sample_upload.csv"
+          style="font-size:11px;color:#2563EB;text-align:center;text-decoration:none;padding-bottom:2px">
+          <i class="ti ti-download" style="font-size:10px;vertical-align:-1px"></i> Download sample CSV
+        </a>
+      </form>
+    </div>
+
+  </div><!-- end col 1 -->
+
+
+  <!-- ════ COL 2: Add Entity — full height, topics scroll ════ -->
+  <div class="em-col">
+    <div class="card" style="background:linear-gradient(160deg,#FFFBEB,#FEF3C7);border:1px solid #FCD34D;box-shadow:0 3px 10px rgba(217,119,6,0.13);flex:1;min-height:0">
+      <div class="card-hd">
+        <div class="card-ic" style="background:#FDE68A"><i class="ti ti-plus" style="color:#92400E"></i></div>
+        <span class="card-lbl" style="color:#92400E">Add Entity</span>
+      </div>
+      <form method="post" action="/add-entity"
+        style="display:flex;flex-direction:column;gap:9px;flex:1;min-height:0">
+
+        <div class="fld">
+          <label style="color:#78350F">Name</label>
+          <input name="name" required placeholder="e.g. Apple Inc." style="border:0.5px solid #FCD34D"/>
+        </div>
+        <div class="fld">
+          <label style="color:#78350F">Type</label>
+          <select name="entity_type" id="entityTypeSelect" style="border:0.5px solid #FCD34D"
+            onchange="toggleEntityTypeFields(this.value)">
+            <option value="client">Client</option>
+            <option value="prospect">Prospect</option>
+            <option value="industry">Industry</option>
+          </select>
+        </div>
+
+        <!-- Client / Prospect: website URL -->
+        <div id="websiteField" style="display:flex;flex-direction:column;gap:0">
+          <div class="fld">
+            <label style="color:#78350F">Company Website</label>
+            <input name="website" placeholder="e.g. https://apple.com"
+              style="border:0.5px solid #FCD34D"/>
+          </div>
+        </div>
+
+        <!-- Industry-specific fields -->
+        <div id="industryFields" style="display:none;flex-direction:column;gap:9px">
+          <div class="fld">
+            <label style="color:#78350F">Industry Type</label>
+            <input name="industry_type" placeholder="e.g. Financial Services, Healthcare"
+              style="border:0.5px solid #FCD34D"/>
+          </div>
+          <div class="fld">
+            <label style="color:#78350F">News Scope</label>
+            <textarea name="news_scope" rows="2"
+              placeholder="e.g. Regulatory changes, market trends, major M&amp;A"
+              style="border:0.5px solid #FCD34D;width:100%;border-radius:6px;
+                padding:6px 9px;font-size:12px;font-family:var(--f);
+                color:#0F172A;resize:vertical;box-sizing:border-box"></textarea>
+          </div>
+        </div>
+
+        <!-- Topics — inner scroll fills remaining space -->
+        <div style="display:flex;flex-direction:column;flex:1;min-height:0">
+          <label style="font-size:11px;font-weight:600;color:#78350F;display:block;margin-bottom:4px;flex-shrink:0">Topics</label>
+          <div class="iscroll" style="background:#fff;border:0.5px solid #FCD34D;border-radius:6px;padding:4px 8px;flex:1">
+            {% for topic in topics %}
+            <label style="display:flex;align-items:flex-start;gap:7px;cursor:pointer;
+              font-size:11px;color:#78350F;line-height:1.4;
+              padding:5px 2px;border-bottom:0.5px solid rgba(252,211,77,0.3)">
+              <input type="checkbox" name="topics" value="{{ topic }}"
+                style="margin-top:2px;accent-color:#D97706;flex-shrink:0"/>
+              {{ topic }}
+            </label>
+            {% endfor %}
+          </div>
+        </div>
+
+        <button type="submit" class="btn-primary"
+          style="background:linear-gradient(90deg,#92400E,#D97706);box-shadow:0 2px 6px rgba(217,119,6,0.3)">
+          <i class="ti ti-plus"></i>Add Entity
+        </button>
+      </form>
+    </div>
+  </div><!-- end col 2 -->
+
+
+  <!-- ════ COL 3: Entity tables — each with own scroll ════ -->
+  <div class="em-col">
+    <div style="display:flex;flex-direction:column;gap:8px;flex:1;min-height:0">
+
+      {% for label, head_bg, acc, ttl in [
+        ("Clients",    "linear-gradient(90deg,#EFF6FF,#F8FAFF)", "#2563EB", "#1E40AF"),
+        ("Prospects",  "linear-gradient(90deg,#F0FDFA,#F8FFFE)", "#0D9488", "#0F766E"),
+        ("Industries", "linear-gradient(90deg,#F5F3FF,#FAF9FF)", "#7C3AED", "#5B21B6")
+      ] %}
+      {% set elist = clients if label=="Clients" else (prospects if label=="Prospects" else industries) %}
+
+      <!-- each table is flex column with its own inner scroll, min 4 rows visible -->
+      <div style="background:#fff;border-radius:10px;border:0.5px solid #D4DAE8;
+        box-shadow:0 2px 6px rgba(0,0,0,0.05);flex:1;min-height:200px;
+        display:flex;flex-direction:column;overflow:hidden">
+
+        <!-- sticky header -->
+        <div class="tbl-hd" style="background:{{ head_bg }};flex-shrink:0">
+          <div class="tbl-acc" style="background:{{ acc }}"></div>
+          <span class="tbl-lbl" style="color:{{ ttl }}">{{ label }}</span>
+          <span class="tbl-cnt">{{ elist|length }}</span>
+        </div>
+
+        {% if elist %}
+        <!-- independent inner scroll per table -->
+        <div class="iscroll" style="flex:1">
+          <table style="width:100%;border-collapse:collapse">
+            <thead>
+              <tr>
+                <th style="text-align:left;padding:6px 14px;font-size:10px;font-weight:700;
+                  color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;
+                  border-bottom:0.5px solid #F1F5F9;position:sticky;top:0;background:#fff;z-index:1">Name</th>
+                <th style="text-align:center;padding:6px 10px;font-size:10px;font-weight:700;
+                  color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;width:60px;
+                  border-bottom:0.5px solid #F1F5F9;position:sticky;top:0;background:#fff;z-index:1">News</th>
+                <th style="padding:6px 10px;width:36px;
+                  border-bottom:0.5px solid #F1F5F9;position:sticky;top:0;background:#fff;z-index:1"></th>
+              </tr>
+            </thead>
+            <tbody>
+            {% for entity in elist %}
+            {% set cnt = news_counts.get(entity.id, 0) %}
+            <tr style="border-bottom:0.5px solid #F8FAFC"
+              onmouseover="this.style.background='#F9FAFB'"
+              onmouseout="this.style.background=''">
+              <td style="padding:8px 14px">
+                <span style="font-size:13px;font-weight:600;color:#0F172A">{{ entity.name }}</span>
+                {% if label != "Industries" and entity.website %}
+                <div style="margin-top:2px">
+                  <a href="{{ entity.website }}" target="_blank" rel="noopener"
+                    style="font-size:10px;color:#2563EB;text-decoration:none;opacity:0.75;display:inline-flex;align-items:center;gap:2px">
+                    <i class="ti ti-external-link" style="font-size:9px"></i>
+                    {{ entity.website | replace('https://', '') | replace('http://', '') }}
+                  </a>
+                </div>
+                {% endif %}
+                {% if label == "Industries" %}
+                {% if entity.industry_type %}
+                <div style="font-size:10px;color:#7C3AED;margin-top:1px;font-weight:600">{{ entity.industry_type }}</div>
+                {% endif %}
+                {% if entity.news_scope %}
+                <div style="font-size:9px;color:#64748B;margin-top:1px;line-height:1.3">{{ entity.news_scope }}</div>
+                {% endif %}
+                {% if entity.topics %}
+                <div style="display:flex;flex-wrap:wrap;gap:2px;margin-top:3px">
+                  {% for t in entity.topics[:2] %}
+                  <span style="font-size:8px;background:#EDE9FE;color:#5B21B6;border:0.5px solid #C4B5FD;padding:1px 5px;border-radius:4px;line-height:1.5">{{ t[:22] }}{% if t|length > 22 %}…{% endif %}</span>
+                  {% endfor %}
+                  {% if entity.topics|length > 2 %}
+                  <span style="font-size:8px;color:#94A3B8;padding:1px 0">+{{ entity.topics|length - 2 }} more</span>
+                  {% endif %}
+                </div>
+                {% endif %}
+                {% endif %}
+              </td>
+              <td style="padding:8px 10px;text-align:center;width:60px">
+                {% if cnt > 0 %}
+                <span style="font-size:11px;font-weight:700;color:{{ ttl }};
+                  background:{{ head_bg }};padding:2px 9px;border-radius:99px;
+                  border:0.5px solid {{ acc }}20">{{ cnt }}</span>
+                {% else %}
+                <span style="font-size:10px;color:#CBD5E1">—</span>
+                {% endif %}
+              </td>
+              <td style="padding:8px 10px;width:36px;text-align:center">
+                <form method="post" action="/delete-entity/{{ entity.id }}" style="margin:0"
+                  onsubmit="return confirm('Delete {{ entity.name }}?')">
+                  <button title="Delete {{ entity.name }}"
+                    style="width:26px;height:26px;border-radius:6px;
+                      border:0.5px solid #FBCFE8;background:#FFF0F6;
+                      cursor:pointer;color:#BE185D;
+                      display:flex;align-items:center;justify-content:center;
+                      font-family:var(--f);padding:0;
+                      transition:background 0.15s,border-color 0.15s"
+                    onmouseover="this.style.background='#FCE7F3';this.style.borderColor='#F9A8D4'"
+                    onmouseout="this.style.background='#FFF0F6';this.style.borderColor='#FBCFE8'">
+                    <i class="ti ti-trash" style="font-size:11px"></i>
+                  </button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div style="padding:18px 14px;text-align:center;font-size:12px;color:#94A3B8;font-style:italic;flex:1;display:flex;align-items:center;justify-content:center">
+          No {{ label|lower }} yet — add one using the form.
+        </div>
+        {% endif %}
+
+      </div>
+      {% endfor %}
+
+    </div>
+  </div><!-- end col 3 -->
+
+</div><!-- end em-wrap -->
+
+<script>
+// Show/hide type-specific fields in Add Entity form
+function toggleEntityTypeFields(val) {
+  // Industry fields (industry_type, news_scope)
+  document.getElementById('industryFields').style.display = val === 'industry' ? 'flex' : 'none';
+  // Website field (clients and prospects only)
+  document.getElementById('websiteField').style.display  = val !== 'industry' ? 'flex' : 'none';
+}
+
+// ── Date helpers ──────────────────────────────────────────────────────────────
+const yesterday = new Date();
+yesterday.setDate(yesterday.getDate() - 1);
+const yStr = yesterday.toISOString().split('T')[0];
+
+function fmtDate(d) {
+  return d.toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' });
+}
+
+// Show/hide custom date inputs
+function toggleCustom(val) {
+  const cr = document.getElementById('customRange');
+  cr.style.display = val === 'custom' ? 'flex' : 'none';
+  if (val !== 'custom') {
+    document.getElementById('dateFrom').value = '';
+    document.getElementById('dateTo').value = '';
+  }
+}
+
+// Calculate & display the window preview; called on any period/date change
+function updateWindowPreview() {
+  const sel  = document.getElementById('periodSelect').value;
+  const wpR  = document.getElementById('wpRange');
+  const wpD  = document.getElementById('wpDays');
+
+  let fromDate, toDate, days;
+
+  if (sel === 'custom') {
+    const fv = document.getElementById('dateFrom').value;
+    const tv = document.getElementById('dateTo').value;
+    if (!fv || !tv) { wpR.textContent = 'Select both dates'; wpD.textContent = ''; return; }
+    fromDate = new Date(fv);
+    toDate   = new Date(tv);
+    if (fromDate > toDate) { wpR.textContent = 'From must be before To'; wpD.textContent = ''; return; }
+    days = Math.round((toDate - fromDate) / 86400000) + 1;
+  } else {
+    days     = parseInt(sel, 10);
+    toDate   = new Date(yesterday);
+    fromDate = new Date(yesterday);
+    fromDate.setDate(fromDate.getDate() - (days - 1));
+  }
+
+  wpR.textContent = fmtDate(fromDate) + ' → ' + fmtDate(toDate);
+  wpD.textContent = days + (days === 1 ? ' day' : ' days') + ' coverage';
+}
+
+// Init date constraints and initial preview
+document.getElementById('dateFrom').max = yStr;
+document.getElementById('dateTo').max   = yStr;
+updateWindowPreview();
+
+// Populate hidden fields + validate before submit
+document.getElementById('fetchForm').addEventListener('submit', function(e) {
+  const sel = document.getElementById('periodSelect').value;
+  if (sel === 'custom') {
+    const from = document.getElementById('dateFrom').value;
+    const to   = document.getElementById('dateTo').value;
+    if (!from || !to) { e.preventDefault(); alert('Please select both dates.'); return; }
+    if (from > to)    { e.preventDefault(); alert('"From" must be before "To".'); return; }
+    document.getElementById('hFrom').value = from;
+    document.getElementById('hTo').value   = to;
+  }
+  document.getElementById('hPeriod').value = sel;
+});
+setTimeout(() => {
+  document.querySelectorAll('[data-flash]').forEach(el => {
+    el.style.transition = 'opacity 0.5s';
+    el.style.opacity = '0';
+    setTimeout(() => el.remove(), 500);
+  });
+}, 5000);
+if (window.history.replaceState && window.location.search) {
+  window.history.replaceState({}, '', window.location.pathname);
+}
+</script>
+{% endblock %}

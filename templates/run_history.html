@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Run History — News Digest{% endblock %}
+{% block page_title %}Run History{% endblock %}
+
+{% block topbar_right %}
+<span style="font-size:11px;color:#94A3B8">{{ runs|length }} run{{ 's' if runs|length != 1 else '' }} recorded</span>
+{% endblock %}
+
+{% block content %}
+{% if runs %}
+<div style="background:#fff;border-radius:10px;border:0.5px solid #D4DAE8;overflow:hidden;box-shadow:0 2px 6px rgba(0,0,0,0.05)">
+  <div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead>
+        <tr style="background:#F8FAFC;border-bottom:0.5px solid #D4DAE8">
+          <th style="text-align:left;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap">Started</th>
+          <th style="text-align:left;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap">Completed</th>
+          <th style="text-align:left;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap">Period</th>
+          <th style="text-align:left;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap">Status</th>
+          <th style="text-align:right;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap">Entities</th>
+          <th style="text-align:right;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap">Articles</th>
+          <th style="text-align:right;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap">Dupes removed</th>
+          <th style="text-align:right;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap">Rejected</th>
+          <th style="text-align:right;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap">Duration</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in runs %}
+      {% set mins = (r.duration_seconds // 60) %}
+      {% set secs = (r.duration_seconds % 60) %}
+      <tr style="border-bottom:0.5px solid #F8FAFC" onmouseover="this.style.background='#F9FAFB'" onmouseout="this.style.background=''">
+
+        <td style="padding:9px 14px;color:#94A3B8;white-space:nowrap;font-size:11px">{{ r.started_at }}</td>
+        <td style="padding:9px 14px;color:#94A3B8;white-space:nowrap;font-size:11px">{{ r.completed_at }}</td>
+        <td style="padding:9px 14px;color:#475569;font-size:11px;white-space:nowrap">{{ r.window_label or "—" }}</td>
+
+        <td style="padding:9px 14px">
+          {% if r.status == "completed" %}
+          <span style="font-size:10px;background:#F0FDF4;color:#14532D;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid #86EFAC">
+            <i class="ti ti-circle-check" style="font-size:10px;vertical-align:-1px"></i> Completed
+          </span>
+          {% elif r.status == "cancelled" %}
+          <span style="font-size:10px;background:#FFFBEB;color:#92400E;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid #FCD34D">
+            <i class="ti ti-x" style="font-size:10px;vertical-align:-1px"></i> Cancelled
+          </span>
+          {% elif r.status == "failed" %}
+          <span style="font-size:10px;background:#FFF0F6;color:#BE185D;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid #FBCFE8">
+            <i class="ti ti-alert-triangle" style="font-size:10px;vertical-align:-1px"></i> Failed
+          </span>
+          {% else %}
+          <span style="font-size:10px;background:#F1F5F9;color:#64748B;padding:2px 8px;border-radius:99px;font-weight:600">{{ r.status }}</span>
+          {% endif %}
+        </td>
+
+        <td style="padding:9px 14px;text-align:right;font-weight:600;color:#0F172A">{{ r.total_entities }}</td>
+
+        <td style="padding:9px 14px;text-align:right">
+          <span style="font-weight:700;color:#1E40AF;font-size:13px">{{ r.total_articles }}</span>
+        </td>
+
+        <td style="padding:9px 14px;text-align:right">
+          {% if r.duplicates_removed %}
+          <span style="color:#BE185D;font-weight:600">−{{ r.duplicates_removed }}</span>
+          {% else %}
+          <span style="color:#CBD5E1">0</span>
+          {% endif %}
+        </td>
+
+        <td style="padding:9px 14px;text-align:right">
+          {% if r.articles_rejected %}
+          <span style="color:#D97706;font-weight:600">−{{ r.articles_rejected }}</span>
+          {% else %}
+          <span style="color:#CBD5E1">0</span>
+          {% endif %}
+        </td>
+
+        <td style="padding:9px 14px;text-align:right;color:#64748B;font-size:11px;white-space:nowrap">
+          {% if mins > 0 %}{{ mins }}m {% endif %}{{ secs }}s
+        </td>
+
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div style="text-align:center;padding:60px 20px;color:#94A3B8">
+  <i class="ti ti-chart-bar" style="font-size:40px;display:block;margin-bottom:12px"></i>
+  <p style="font-size:14px;font-weight:600;margin-bottom:4px">No runs recorded yet.</p>
+  <p style="font-size:12px">Run history is saved automatically after each pipeline run.</p>
+</div>
+{% endif %}
+{% endblock %}

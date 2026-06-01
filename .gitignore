@@ -1,0 +1,11 @@
+.env
+venv/
+logs/
+data.json
+audit.json
+gap_report.json
+run_history.json
+error_log.json
+*.xlsx
+__pycache__/
+*.pyc
