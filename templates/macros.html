@@ -1,0 +1,16 @@
+{% macro empty_state(icon, heading, subtext="") %}
+<div style="text-align:center;padding:60px 20px;color:#94A3B8">
+  <i class="ti ti-{{ icon }}" style="font-size:40px;display:block;margin-bottom:12px"></i>
+  <p style="font-size:14px;font-weight:600;margin-bottom:4px">{{ heading }}</p>
+  {% if subtext %}<p style="font-size:12px">{{ subtext }}</p>{% endif %}
+</div>
+{% endmacro %}
+
+{% macro entity_type_badge(etype) %}
+<span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;
+  {% if etype == 'client' %}background:#EFF6FF;color:#1E40AF
+  {% elif etype == 'prospect' %}background:#E8FAF8;color:#0F766E
+  {% else %}background:#F5F3FF;color:#5B21B6{% endif %}">
+  {{ etype|capitalize }}
+</span>
+{% endmacro %}

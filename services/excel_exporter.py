@@ -21,7 +21,8 @@ GRAY_DARK    = "2C2C2A"
 AMBER        = "FAEEDA"
 AMBER_DARK   = "854F0B"
 
-COPYRIGHT = "© 2026 News Digest Platform. Internal use only. All rights reserved."
+COPYRIGHT         = "© 2026 News Digest Platform. Internal use only. All rights reserved."
+ARTICLE_ROW_HEIGHT = 65
 
 
 # ── Style helpers ──────────────────────────────────────────────────────────────
@@ -157,6 +158,16 @@ def _build_summary(wb, client_data, prospect_data,
     ws.freeze_panes = "A4"
 
 
+# ── Sheet setup helper ─────────────────────────────────────────────────────────
+def _sheet_header(ws, title: str, headers: list, window, dark_color: str, mid_color: str) -> int:
+    """Write title / period / column-header rows and return the column count."""
+    ncols = len(headers)
+    _title_row(ws,  title,   ncols, dark_color)
+    _period_row(ws, window,  ncols, mid_color)
+    _header_row(ws, headers, row=3, bg=mid_color)
+    return ncols
+
+
 # ── Client Report sheet ────────────────────────────────────────────────────────
 def _build_client_sheet(wb, client_data: List[Dict], window: dict | None):
     """
@@ -169,10 +180,7 @@ def _build_client_sheet(wb, client_data: List[Dict], window: dict | None):
         "News Article Details (with Insights)",
         "Source", "Date", "Month", "Hyperlink", "Client/Prospect",
     ]
-    ncols = len(headers)
-    _title_row(ws,  "Client News Report", ncols, BLUE_DARK)
-    _period_row(ws, window, ncols, BLUE_MID)
-    _header_row(ws, headers, row=3, bg=BLUE_MID)
+    ncols = _sheet_header(ws, "Client News Report", headers, window, BLUE_DARK, BLUE_MID)
     _set_widths(ws, [24, 36, 55, 20, 14, 14, 14, 16])
 
     row = 4
@@ -189,16 +197,12 @@ def _build_client_sheet(wb, client_data: List[Dict], window: dict | None):
             _data_cell(ws, row, 4, n.source,          fill)
             _data_cell(ws, row, 5, date_fmt,          fill)
             _data_cell(ws, row, 6, month,             fill)
-            _data_cell(ws, row, 7, "View Article",    fill,
+            link_label = "⚠ View Article" if n.paywall_note else "View Article"
+            _data_cell(ws, row, 7, link_label,        fill,
                        hyperlink=n.url or n.original_url)
             _data_cell(ws, row, 8, "Client",          fill)
 
-            if n.paywall_note:
-                ws.cell(row=row, column=7).comment = None  # no openpyxl comment needed
-                _data_cell(ws, row, 7, "⚠ View Article", fill,
-                           hyperlink=n.url)
-
-            ws.row_dimensions[row].height = 65
+            ws.row_dimensions[row].height = ARTICLE_ROW_HEIGHT
             row += 1
 
     _copyright_row(ws, ncols, row + 1)
@@ -216,10 +220,7 @@ def _build_prospect_sheet(wb, prospect_data: List[Dict], window: dict | None):
         "Company", "News Article Header", "News Article Details",
         "Source", "Month, Year", "Date", "News HyperLink", "Client/Prospect",
     ]
-    ncols = len(headers)
-    _title_row(ws,  "Prospect News Report", ncols, GREEN_DARK)
-    _period_row(ws, window, ncols, GREEN_MID)
-    _header_row(ws, headers, row=3, bg=GREEN_MID)
+    ncols = _sheet_header(ws, "Prospect News Report", headers, window, GREEN_DARK, GREEN_MID)
     _set_widths(ws, [24, 36, 55, 20, 16, 14, 14, 16])
 
     row = 4
@@ -239,7 +240,7 @@ def _build_prospect_sheet(wb, prospect_data: List[Dict], window: dict | None):
                        hyperlink=n.url or n.original_url)
             _data_cell(ws, row, 8, "Prospect",      fill)
 
-            ws.row_dimensions[row].height = 65
+            ws.row_dimensions[row].height = ARTICLE_ROW_HEIGHT
             row += 1
 
     _copyright_row(ws, ncols, row + 1)
@@ -260,10 +261,7 @@ def _build_industry_sheet(wb, industry_data: List[Dict], window: dict | None):
         "News Article Details (with Insights)",
         "Source", "Month", "Date", "Hyperlink",
     ]
-    ncols = len(headers)
-    _title_row(ws,  "Industry News Report", ncols, PURPLE_DARK)
-    _period_row(ws, window, ncols, PURPLE_MID)
-    _header_row(ws, headers, row=3, bg=PURPLE_MID)
+    ncols = _sheet_header(ws, "Industry News Report", headers, window, PURPLE_DARK, PURPLE_MID)
     _set_widths(ws, [22, 32, 36, 55, 20, 14, 14, 14])
 
     row = 4
@@ -284,7 +282,7 @@ def _build_industry_sheet(wb, industry_data: List[Dict], window: dict | None):
             _data_cell(ws, row, 8, "View Article",        fill,
                        hyperlink=n.url or n.original_url)
 
-            ws.row_dimensions[row].height = 65
+            ws.row_dimensions[row].height = ARTICLE_ROW_HEIGHT
             row += 1
 
     _copyright_row(ws, ncols, row + 1)
@@ -295,25 +293,27 @@ def _build_industry_sheet(wb, industry_data: List[Dict], window: dict | None):
 def _build_gap_sheet(wb, gap_report: dict):
     """
     Lists all entities with no news at all, and per-entity topic gaps.
+    The gap_report dict already contains the window from build_gap_report().
     """
     if not gap_report:
         return
 
-    ws      = wb.create_sheet("Gap Report")
-    ncols   = 3
+    ws    = wb.create_sheet("Gap Report")
+    ncols = 3
     _title_row(ws, "News Gap Report", ncols, AMBER_DARK)
+    _period_row(ws, gap_report.get("window"), ncols, AMBER_DARK, row=2)
     _set_widths(ws, [28, 20, 45])
 
-    # Section 1 — no news at all
-    ws.merge_cells(f"A3:C3")
-    c = ws.cell(row=3, column=1, value="Entities with NO news in this period")
+    # Section 1 — no news at all (shifted down one row for period row)
+    ws.merge_cells(f"A4:C4")
+    c = ws.cell(row=4, column=1, value="Entities with NO news in this period")
     c.font = _font(bold=True, size=10, color=AMBER_DARK)
     c.fill = _fill(AMBER)
     c.alignment = _align()
 
-    _header_row(ws, ["Entity Name", "Type", "Reason"], row=4, bg=AMBER_DARK)
+    _header_row(ws, ["Entity Name", "Type", "Reason"], row=5, bg=AMBER_DARK)
 
-    row = 5
+    row = 6
     for item in gap_report.get("no_news_at_all", []):
         fill = _fill(AMBER) if row % 2 == 0 else _fill(WHITE)
         _data_cell(ws, row, 1, item["name"], fill)
@@ -344,10 +344,120 @@ def _build_gap_sheet(wb, gap_report: dict):
         row += 1
 
     _copyright_row(ws, ncols, row + 1)
-    ws.freeze_panes = "A5"
+    ws.freeze_panes = "A6"
 
 
-# ── Public entry point ─────────────────────────────────────────────────────────
+# ── Full analytics sheet ───────────────────────────────────────────────────────
+def _build_full_analytics(wb, entities_map: dict, all_news: dict,
+                          audit_entries: list, window: dict | None = None):
+    """
+    Single sheet with every article (accepted + rejected) including reason.
+    Columns: Entity | Type | Status | Article Title | Source | URL |
+             Published | Period | Primary Category | Secondary Category |
+             Topic | Fetch Source | Reason / Note
+    """
+    RED_LIGHT    = "FEE2E2"
+    RED_MID      = "B91C1C"
+    ORANGE_LIGHT = "FEF9C3"
+    ORANGE_MID   = "B45309"
+    GREEN_LIGHT2 = "DCFCE7"
+    GREEN_MID2   = "166534"
+
+    ws      = wb.create_sheet("Full Analytics")
+    headers = [
+        "Entity Name", "Entity Type", "Status", "Reason / Note",
+        "Article Title", "Source", "URL",
+        "Published Date", "Period",
+        "Primary Category", "Secondary Category",
+        "Topic Queried", "Fetch Source",
+    ]
+    ncols        = len(headers)
+    period_label = (window or {}).get("label", "All time")
+    _title_row(ws, "Full Analytics — All Articles (Accepted + Rejected)", ncols, GRAY_DARK)
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=ncols)
+    c = ws.cell(row=2, column=1,
+                value=f"Period: {period_label}  |  "
+                      f"Generated: {datetime.now().strftime('%d %B %Y, %H:%M')}  |  "
+                      f"Accepted: {sum(len(v) for v in all_news.values())}  |  "
+                      f"Audit entries: {len(audit_entries)}")
+    c.font      = _font(size=10, color=WHITE)
+    c.fill      = _fill(GRAY_DARK)
+    c.alignment = _center()
+
+    _header_row(ws, headers, row=3, bg=GRAY_DARK)
+    _set_widths(ws, [22, 12, 14, 40, 44, 20, 14, 14, 28, 30, 28, 28, 14])
+
+    row = 4
+
+    # ── Accepted articles from news data ──────────────────────────────────────
+    for eid, items in all_news.items():
+        entity = entities_map.get(eid)
+        entity_name = entity.name if entity else eid
+        entity_type = entity.entity_type.value if entity else "unknown"
+        for idx, n in enumerate(items):
+            fill = _fill(GREEN_LIGHT2) if idx % 2 == 0 else _fill(WHITE)
+            _data_cell(ws, row, 1,  entity_name,             fill)
+            _data_cell(ws, row, 2,  entity_type.capitalize(), fill)
+            c = ws.cell(row=row, column=3, value="Accepted")
+            c.font      = _font(bold=True, size=10, color=GREEN_MID2)
+            c.fill      = fill
+            c.border    = _border()
+            c.alignment = _align()
+            _data_cell(ws, row, 4,  "Passed all checks",     fill)
+            _data_cell(ws, row, 5,  n.title,                 fill)
+            _data_cell(ws, row, 6,  n.source,                fill)
+            _data_cell(ws, row, 7,  "View",                  fill, hyperlink=n.url or n.original_url)
+            _data_cell(ws, row, 8,  n.published_date,        fill)
+            _data_cell(ws, row, 9,  n.period,                fill)
+            _data_cell(ws, row, 10, n.primary_category,      fill)
+            _data_cell(ws, row, 11, n.secondary_category or "", fill)
+            _data_cell(ws, row, 12, n.topic_queried or "",   fill)
+            _data_cell(ws, row, 13, n.fetch_source or "",    fill)
+            ws.row_dimensions[row].height = 40
+            row += 1
+
+    # ── Rejected / duplicate entries from audit log ───────────────────────────
+    non_accepted = [e for e in audit_entries if e.action != "accepted"]
+    for idx, entry in enumerate(non_accepted):
+        action = entry.action  # duplicate_removed | validation_rejected | url_invalid
+        if action == "duplicate_removed":
+            fill     = _fill(ORANGE_LIGHT) if idx % 2 == 0 else _fill(WHITE)
+            status   = "Duplicate"
+            s_color  = ORANGE_MID
+        else:
+            fill     = _fill(RED_LIGHT) if idx % 2 == 0 else _fill(WHITE)
+            status   = action.replace("_", " ").title()
+            s_color  = RED_MID
+
+        entity = entities_map.get(entry.entity_id)
+        entity_type = entity.entity_type.value.capitalize() if entity else "Unknown"
+
+        _data_cell(ws, row, 1,  entry.entity_name,  fill)
+        _data_cell(ws, row, 2,  entity_type,         fill)
+        c = ws.cell(row=row, column=3, value=status)
+        c.font      = _font(bold=True, size=10, color=s_color)
+        c.fill      = fill
+        c.border    = _border()
+        c.alignment = _align()
+        _data_cell(ws, row, 4,  entry.reason,        fill)
+        _data_cell(ws, row, 5,  entry.article_title, fill)
+        _data_cell(ws, row, 6,  "",                  fill)
+        _data_cell(ws, row, 7,  "View" if entry.source_url else "", fill,
+                   hyperlink=entry.source_url or None)
+        _data_cell(ws, row, 8,  entry.run_date,      fill)
+        _data_cell(ws, row, 9,  "",                  fill)
+        _data_cell(ws, row, 10, "",                  fill)
+        _data_cell(ws, row, 11, "",                  fill)
+        _data_cell(ws, row, 12, "",                  fill)
+        _data_cell(ws, row, 13, "",                  fill)
+        ws.row_dimensions[row].height = 40
+        row += 1
+
+    _copyright_row(ws, ncols, row + 1)
+    ws.freeze_panes = "A4"
+
+
+# ── Public entry point (standard digest) ──────────────────────────────────────
 def generate_excel_report(
     client_data:   List[Dict],
     prospect_data: List[Dict],
@@ -377,6 +487,34 @@ def generate_excel_report(
 
     if gap_report:
         _build_gap_sheet(wb, gap_report)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf.read()
+
+
+def generate_full_analytics_report(
+    entities:      list,
+    all_news:      dict,
+    audit_entries: list,
+    window:        dict | None = None,
+) -> bytes:
+    """
+    Generates a single-sheet .xlsx with every article (accepted + rejected).
+    entities: List[Entity]
+    all_news: Dict[entity_id, List[NewsItem]]
+    audit_entries: List[AuditEntry]
+    window: date range dict with 'label', 'from', 'to' keys
+    """
+    entities_map = {e.id: e for e in entities}
+
+    wb = openpyxl.Workbook()
+    active = wb.active
+    if active is not None:
+        wb.remove(active)
+
+    _build_full_analytics(wb, entities_map, all_news, audit_entries, window)
 
     buf = io.BytesIO()
     wb.save(buf)

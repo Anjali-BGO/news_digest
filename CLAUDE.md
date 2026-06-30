@@ -24,7 +24,7 @@ news_digest/
 ├── storage.py              # JSON file persistence (data.json, audit.json, etc.)
 ├── logger.py               # Rotating log handlers (app, errors, pipeline, audit)
 ├── services/
-│   ├── news_fetcher.py     # Tavily + GNews API calls, date window helpers, gap report builder
+│   ├── news_fetcher.py     # Tavily + SerpAPI + NewsData + NewsAPI + NewsAPI.ai calls, date window helpers, gap report builder
 │   ├── deduplicator.py     # URL + headline similarity dedup (no AI, pure Python)
 │   ├── validator.py        # 8-point article validation checklist
 │   ├── hyperlink_validator.py  # 4-layer URL reachability check
@@ -42,10 +42,10 @@ news_digest/
 ## Background Pipeline (run order)
 
 ```
-fetch (Tavily + GNews, 12 topics each)
+fetch (Tavily + SerpAPI + NewsData + NewsAPI, 12 topics each)
   → deduplicate (URL match + headline similarity)
     → validate (8-point checklist)
-      → hyperlink check (HTTP HEAD → redirect → GET → Tavily Extract)
+      → hyperlink check (HTTP HEAD → GET → OpenAI web search → content rescue)
         → AI summarize (GPT-4o-mini)
           → save + audit (storage.py)
 ```
@@ -70,15 +70,16 @@ Job state lives in the in-memory `job_status` dict in `main.py`. Frontend polls 
 a) Missing/removed title — empty, null, [Removed], [Deleted]  
 b) Future date — published after window end  
 c) Outside window start — older than selected period  
-d) Paywalled/empty content — under 150 chars AND title under 60 chars  
+d) Limited content preview — under 150 chars AND title under 60 chars → **soft tag only**, article kept (SerpAPI/NewsAPI return short snippets by design)  
 e) Non-English — language field not `en`/`english`  
-f) Blocked domain — social media and forums (Pinterest, Reddit, YouTube, Twitter, TikTok, Facebook, Instagram, Quora, Scribd, SlideShare) 
-g) Metered paywall (Reuters, Bloomberg, FT, WSJ, etc.) → auto-attempts Google News / Yahoo Finance alternative; if none found, tags article with a note rather than rejecting silently
+f) Blocked domain — social media and forums (Pinterest, Reddit, YouTube, Twitter, TikTok, Facebook, Instagram, Quora, Scribd, SlideShare)  
+g) Entity relevance — entity name (or alias or auto short-name) not found capitalised in title or content → hard reject. Capitalised match applies to all sources to prevent common-word drift (e.g. "Apple" the company vs fruit) and verb false-positives ("officials affirm readiness"). Auto short-name strips trailing suffixes (Group, Ltd, PLC, Inc, Corp, etc.) so "Barclays Group" also matches "Barclays" in text. Explicit aliases can be set per entity.  
+h) Metered paywall (Reuters, Bloomberg, FT, WSJ, etc.) → **soft tag only**, article kept with subscription warning. Article continues through hyperlink validation → AI summarise → categorise → save.
 
 ### Date windows
 - Today is always excluded from the window end (window ends at yesterday)
-- Biweekly runs overlap by ~16 days; deduplication handles repeats
 - Custom range is also capped at yesterday
+- Deduplication handles repeated articles across overlapping runs
 
 ### Storage (Phase 1)
 All persistence is flat JSON files auto-created on first run:
@@ -99,11 +100,17 @@ All JSON files are gitignored. Safe to delete to reset data.
 
 | Variable | Required | Notes |
 |----------|----------|-------|
-| `OPENAI_API_KEY` | Yes | GPT-4o-mini summarization |
-| `TAVILY_API_KEY` | Yes | Primary news source |
-| `GNEWS_API_KEY` | No | Secondary source; 100 req/day free tier |
-| `TAVILY_MAX_RESULTS` | No | Articles per topic from Tavily (default 2; set 3–5× target to survive dedup/validation loss) |
-| `GNEWS_MAX_RESULTS` | No | Articles per topic from GNews (default 2) |
+| `OPENAI_API_KEY` | Yes | GPT-4o-mini summarization + OpenAI web search for hyperlink validation |
+| `TAVILY_API_KEY` | Yes | Primary news source (sync TavilyClient, search_depth=basic) |
+| `SERPAPI_API_KEY` | No | Google News via SerpAPI engine=google+tbm=nws (secondary source) |
+| `NEWSDATA_API_KEY` | No | NewsData.io (secondary source) |
+| `NEWSAPI_API_KEY` | No | NewsAPI.org — English, up to 30-day history on free tier |
+| `NEWSAI_API_KEY` | No | NewsAPI.ai / EventRegistry — entity-focused POST API (newsapi.ai) |
+| `TAVILY_MAX_RESULTS` | No | Articles per topic from Tavily (default 4) |
+| `SERPAPI_MAX_RESULTS` | No | Articles per topic from SerpAPI (default 4) |
+| `NEWSDATA_MAX_RESULTS` | No | Articles per topic from NewsData (default 4) |
+| `NEWSAPI_MAX_RESULTS` | No | Articles per topic from NewsAPI (default 4) |
+| `NEWSAI_MAX_RESULTS` | No | Articles per entity from NewsAPI.ai (default 4) |
 | `MAX_ARTICLES_PER_ENTITY` | No | Hard cap before dedup/validation; `0` = no cap |
 
 ---
@@ -111,8 +118,8 @@ All JSON files are gitignored. Safe to delete to reset data.
 ## Data Models (models.py)
 
 - `EntityType` enum: `client | prospect | industry`
-- `Entity`: id, name, entity_type, topics (optional list)
-- `NewsItem`: 67 fields — title, url, source, published_date, summary, primary_category, secondary_category, url_status, duplicate_flag, validation_status, rejection_reason, paywall_note, topic_queried, fetch_source, etc.
+- `Entity`: id, name, entity_type, topics (optional list), website (optional), industry_type (optional, industries only), news_scope (optional, industries only), aliases (optional list — alternate names checked during relevance validation)
+- `NewsItem`: title, url, source, published_date, fetched_date, period, summary, primary_category, secondary_category, entity_id, entity_type, url_status, original_url, paywall_note, topic_queried, is_primary_topic, fetch_source
 - `TOPIC_CATEGORIES`: hardcoded list of 12 business topic categories used for fetching and AI categorisation
 
 ---

@@ -1,5 +1,8 @@
 from difflib import SequenceMatcher
 from typing import List, Tuple
+from logger import get_logger
+
+log = get_logger("deduplicator")
 
 # Similarity threshold — 0.85 = 85% headline match = same story
 SIMILARITY_THRESHOLD = 0.85
@@ -69,9 +72,10 @@ def deduplicate(articles: List[dict]) -> Tuple[List[dict], List[dict]]:
                 break
 
             # ── Case 2: same URL + different headline → different article ──────
-            if same_url and not same_hdl:
-                # Not a duplicate — keep this article; stop scanning
-                break   # disposition stays None → appended below
+            # Do NOT break here. Continue scanning so that a later entry in clean
+            # with the same headline (Case 1) or a different URL (Case 3) can still
+            # deduplicate this article. Breaking early on the first URL match
+            # caused missed headline duplicates when multiple items share a URL.
 
             # ── Case 3: different URL + same headline → same story, pick best ──
             if not same_url and same_hdl:
@@ -117,7 +121,5 @@ def deduplicate(articles: List[dict]) -> Tuple[List[dict], List[dict]]:
         if disposition is None:
             clean.append(art)
 
-    print(
-        f"[Dedup] {len(articles)} in → {len(clean)} clean | {len(dup_log)} removed"
-    )
+    log.info(f"[Dedup] {len(articles)} in -> {len(clean)} clean | {len(dup_log)} removed")
     return clean, dup_log

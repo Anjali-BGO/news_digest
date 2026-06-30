@@ -9,3 +9,4 @@ error_log.json
 *.xlsx
 __pycache__/
 *.pyc
+pipeline_snapshots/

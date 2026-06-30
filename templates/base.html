@@ -4,6 +4,7 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>{% block title %}News Digest — Bill Gosling{% endblock %}</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%232563EB'/%3E%3Cpath d='M9 8h4l6 10V8h4v16h-4L13 14v10H9z' fill='white'/%3E%3C/svg%3E" type="image/svg+xml"/>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet"/>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css"/>
@@ -113,8 +114,11 @@
         <span class="nav-dot" style="background:#16A34A"></span>
       </a>
       <span class="nav-section">Actions</span>
-      <a href="/export/excel" class="nav-item">
+      <a href="/export/excel" class="nav-item" title="Exports all periods — use the Export button on the Digest page to export a specific period">
         <i class="ti ti-file-spreadsheet"></i>Export Excel
+      </a>
+      <a href="/export/excel-full" class="nav-item">
+        <i class="ti ti-table-export"></i>Full Analytics
       </a>
     </nav>
 
@@ -162,7 +166,6 @@
       © 2026 Bill Gosling Outsourcing · News Digest Platform · Internal use only · All rights reserved.
     </footer>
   </div>
-</div>
 
 <style>
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }

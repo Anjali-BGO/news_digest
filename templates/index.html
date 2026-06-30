@@ -129,6 +129,7 @@
       {% elif error == 'bad_format' %}<i class="ti ti-alert-triangle" style="font-size:13px;vertical-align:-2px;margin-right:6px"></i>Unsupported format. Use .csv, .xlsx or .xls.
       {% elif error == 'empty' %}<i class="ti ti-alert-triangle" style="font-size:13px;vertical-align:-2px;margin-right:6px"></i>File is empty.
       {% elif error == 'parse' %}<i class="ti ti-x" style="font-size:13px;vertical-align:-2px;margin-right:6px"></i>Could not read the file.
+      {% elif error == 'missing_cols' %}<i class="ti ti-x" style="font-size:13px;vertical-align:-2px;margin-right:6px"></i>File must have <strong>name</strong> and <strong>type</strong> columns.
       {% else %}<i class="ti ti-circle-check" style="font-size:13px;vertical-align:-2px;margin-right:6px"></i>Upload complete — <strong>{{ msg_added }} added</strong>{% if msg_skipped %} · {{ msg_skipped }} skipped{% endif %}{% if msg_invalid %} · {{ msg_invalid }} invalid{% endif %}
       {% endif %}
     {% endif %}
@@ -143,7 +144,7 @@
   <!-- ════ COL 1: Stats + Fetch News + Bulk Upload ════ -->
   <div class="em-col">
 
-    <!-- Total articles collected — compact stat banner (light) -->
+    <!-- Stat banner — total + current period -->
     <div style="background:linear-gradient(135deg,#EFF6FF,#E0F2FE);border:1px solid #BFDBFE;
       border-radius:10px;padding:10px 14px;flex-shrink:0;display:flex;align-items:center;gap:12px;
       box-shadow:0 2px 6px rgba(37,99,235,0.08)">
@@ -151,7 +152,7 @@
         flex-shrink:0;display:flex;align-items:center;justify-content:center">
         <i class="ti ti-news" style="font-size:17px;color:#2563EB"></i>
       </div>
-      <div>
+      <div style="flex:1;min-width:0">
         <div style="font-size:9px;font-weight:600;color:#64748B;letter-spacing:0.09em;text-transform:uppercase">
           Total Articles Collected
         </div>
@@ -159,10 +160,23 @@
           {{ total_news }}
         </div>
       </div>
+      {% if current_period_news %}
+      <div style="border-left:1px solid #BFDBFE;padding-left:12px;flex-shrink:0">
+        <div style="font-size:9px;font-weight:600;color:#64748B;letter-spacing:0.09em;text-transform:uppercase;white-space:nowrap">
+          Current Period
+        </div>
+        <div style="font-size:18px;font-weight:800;color:#0D9488;line-height:1.2;margin-top:1px">
+          {{ current_period_news }}
+        </div>
+        {% if current_period %}
+        <div style="font-size:9px;color:#64748B;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:110px">{{ current_period }}</div>
+        {% endif %}
+      </div>
+      {% endif %}
     </div>
 
     <!-- Fetch News — date range + fetch all trigger -->
-    <div class="card" style="background:#E8FAF8;border:1px solid #7DE8D8;box-shadow:0 3px 10px rgba(13,148,136,0.12);flex:2;min-height:0">
+    <div class="card" style="background:#E8FAF8;border:1px solid #7DE8D8;box-shadow:0 3px 10px rgba(13,148,136,0.12);flex:1;min-height:0">
       <div class="card-hd">
         <div class="card-ic" style="background:#A7F3E8"><i class="ti ti-calendar" style="color:#0F766E"></i></div>
         <span class="card-lbl" style="color:#0F766E">Date Range</span>
@@ -185,35 +199,20 @@
           </select>
         </div>
 
-        <!-- API Sources — 2-per-row flex wrap, explicit widths to avoid clip -->
+        <!-- API Sources — only show sources with a configured API key -->
         <div class="fld">
           <label style="color:#135E56">News Sources</label>
           <div style="background:#fff;border:0.5px solid #99F6E4;border-radius:6px;padding:5px 8px;
             display:flex;flex-wrap:wrap;gap:4px 0">
-            <label title="Deep search" style="width:50%;display:flex;align-items:center;gap:5px;
+            {% for src in available_sources %}
+            <label title="{{ src.title }}" style="width:50%;display:flex;align-items:center;gap:5px;
               font-size:11px;font-weight:600;color:#0F172A;cursor:pointer;padding:2px 0">
-              <input type="checkbox" name="api_sources" value="tavily" checked
+              <input type="checkbox" name="api_sources" value="{{ src.value }}"
+                {% if src.checked %}checked{% endif %}
                 style="accent-color:#0D9488;flex-shrink:0;margin:0;width:13px;height:13px">
-              Tavily
+              {{ src.label }}
             </label>
-            <label title="Broad coverage" style="width:50%;display:flex;align-items:center;gap:5px;
-              font-size:11px;font-weight:600;color:#0F172A;cursor:pointer;padding:2px 0">
-              <input type="checkbox" name="api_sources" value="gnews"
-                style="accent-color:#0D9488;flex-shrink:0;margin:0;width:13px;height:13px">
-              GNews
-            </label>
-            <label title="Google News via SerpAPI" style="width:50%;display:flex;align-items:center;gap:5px;
-              font-size:11px;font-weight:600;color:#0F172A;cursor:pointer;padding:2px 0">
-              <input type="checkbox" name="api_sources" value="serpapi"
-                style="accent-color:#0D9488;flex-shrink:0;margin:0;width:13px;height:13px">
-              SerpAPI
-            </label>
-            <label title="NewsData.io aggregator" style="width:50%;display:flex;align-items:center;gap:5px;
-              font-size:11px;font-weight:600;color:#0F172A;cursor:pointer;padding:2px 0">
-              <input type="checkbox" name="api_sources" value="newsdata"
-                style="accent-color:#0D9488;flex-shrink:0;margin:0;width:13px;height:13px">
-              NewsData
-            </label>
+            {% endfor %}
           </div>
         </div>
 
@@ -259,47 +258,10 @@
       </form>
     </div>
 
-    <!-- Bulk Upload — compact fixed card -->
-    <div class="card" style="background:linear-gradient(160deg,#FFF0F6,#FCE7F3);border:1px solid #F9A8D4;box-shadow:0 3px 10px rgba(190,24,93,0.11);flex-shrink:0">
-      <div class="card-hd">
-        <div class="card-ic" style="background:#FBCFE8"><i class="ti ti-upload" style="color:#BE185D"></i></div>
-        <span class="card-lbl" style="color:#831843">Bulk Upload</span>
-      </div>
-      <form method="post" action="/upload" enctype="multipart/form-data"
-        style="display:flex;flex-direction:column;gap:8px">
-
-        <!-- compact single-row file pick row -->
-        <div style="border:1.5px dashed #F9A8D4;border-radius:7px;padding:10px 12px;
-          background:rgba(255,255,255,0.7);display:flex;align-items:center;gap:10px">
-          <i class="ti ti-file-spreadsheet" style="font-size:20px;color:#BE185D;flex-shrink:0"></i>
-          <span style="font-size:11px;color:#831843;flex:1">CSV or Excel</span>
-          <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;
-            background:#fff;border:0.5px solid #F9A8D4;border-radius:6px;
-            padding:5px 10px;font-size:11px;font-weight:600;color:#BE185D;
-            font-family:var(--f);white-space:nowrap;flex-shrink:0">
-            <i class="ti ti-paperclip" style="font-size:11px"></i>
-            <span id="fileLabel" style="max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Choose file</span>
-            <input type="file" name="file" accept=".csv,.xlsx,.xls" style="display:none"
-              onchange="document.getElementById('fileLabel').textContent=this.files[0]?this.files[0].name:'Choose file'"/>
-          </label>
-        </div>
-
-        <button type="submit" class="btn-primary"
-          style="background:linear-gradient(90deg,#9D174D,#BE185D);box-shadow:0 2px 6px rgba(157,23,77,0.3)">
-          <i class="ti ti-upload"></i>Upload File
-        </button>
-
-        <a href="/static/sample_upload.csv"
-          style="font-size:11px;color:#2563EB;text-align:center;text-decoration:none;padding-bottom:2px">
-          <i class="ti ti-download" style="font-size:10px;vertical-align:-1px"></i> Download sample CSV
-        </a>
-      </form>
-    </div>
-
   </div><!-- end col 1 -->
 
 
-  <!-- ════ COL 2: Add Entity — full height, topics scroll ════ -->
+  <!-- ════ COL 2: Add Entity + Bulk Upload ════ -->
   <div class="em-col">
     <div class="card" style="background:linear-gradient(160deg,#FFFBEB,#FEF3C7);border:1px solid #FCD34D;box-shadow:0 3px 10px rgba(217,119,6,0.13);flex:1;min-height:0">
       <div class="card-hd">
@@ -323,11 +285,16 @@
           </select>
         </div>
 
-        <!-- Client / Prospect: website URL -->
+        <!-- Client / Prospect: website URL + aliases -->
         <div id="websiteField" style="display:flex;flex-direction:column;gap:0">
           <div class="fld">
             <label style="color:#78350F">Company Website</label>
             <input name="website" placeholder="e.g. https://apple.com"
+              style="border:0.5px solid #FCD34D"/>
+          </div>
+          <div class="fld">
+            <label style="color:#78350F">Also known as / Aliases</label>
+            <input name="aliases" placeholder="e.g. Barclay, BARC (comma-separated, optional)"
               style="border:0.5px solid #FCD34D"/>
           </div>
         </div>
@@ -371,6 +338,46 @@
         </button>
       </form>
     </div>
+
+    <!-- Bulk Upload — compact card below Add Entity -->
+    <div class="card" style="background:linear-gradient(160deg,#FFF0F6,#FCE7F3);border:1px solid #F9A8D4;box-shadow:0 3px 10px rgba(190,24,93,0.11);flex-shrink:0">
+      <div class="card-hd">
+        <div class="card-ic" style="background:#FBCFE8"><i class="ti ti-upload" style="color:#BE185D"></i></div>
+        <span class="card-lbl" style="color:#831843">Bulk Upload</span>
+        <span style="font-size:9px;color:#94A3B8;margin-left:auto">CSV / Excel</span>
+      </div>
+      <form method="post" action="/upload" enctype="multipart/form-data"
+        style="display:flex;flex-direction:column;gap:8px">
+        <div style="border:1.5px dashed #F9A8D4;border-radius:7px;padding:8px 10px;
+          background:rgba(255,255,255,0.7);display:flex;align-items:center;gap:8px">
+          <i class="ti ti-file-spreadsheet" style="font-size:18px;color:#BE185D;flex-shrink:0"></i>
+          <span style="font-size:11px;color:#831843;flex:1">name, type, website, topics…</span>
+          <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;
+            background:#fff;border:0.5px solid #F9A8D4;border-radius:6px;
+            padding:4px 9px;font-size:11px;font-weight:600;color:#BE185D;
+            font-family:var(--f);white-space:nowrap;flex-shrink:0">
+            <i class="ti ti-paperclip" style="font-size:11px"></i>
+            <span id="fileLabel" style="max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Choose file</span>
+            <input type="file" name="file" accept=".csv,.xlsx,.xls" style="display:none"
+              onchange="document.getElementById('fileLabel').textContent=this.files[0]?this.files[0].name:'Choose file'"/>
+          </label>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button type="submit" class="btn-primary"
+            style="flex:1;background:linear-gradient(90deg,#9D174D,#BE185D);box-shadow:0 2px 6px rgba(157,23,77,0.3)">
+            <i class="ti ti-upload"></i>Upload
+          </button>
+          <a href="/static/sample_upload.csv"
+            style="flex-shrink:0;font-size:11px;color:#2563EB;text-decoration:none;
+              display:inline-flex;align-items:center;gap:3px;padding:4px 8px;
+              border:0.5px solid #BFDBFE;border-radius:6px;background:#EFF6FF;
+              white-space:nowrap;font-weight:600">
+            <i class="ti ti-download" style="font-size:10px"></i>Sample
+          </a>
+        </div>
+      </form>
+    </div>
+
   </div><!-- end col 2 -->
 
 
@@ -460,8 +467,9 @@
               </td>
               <td style="padding:8px 10px;width:36px;text-align:center">
                 <form method="post" action="/delete-entity/{{ entity.id }}" style="margin:0"
-                  onsubmit="return confirm('Delete {{ entity.name }}?')">
-                  <button title="Delete {{ entity.name }}"
+                  data-name="{{ entity.name | e }}"
+                  onsubmit="return confirm('Delete “' + this.dataset.name + '”?')">
+                  <button title="Delete {{ entity.name | e }}"
                     style="width:26px;height:26px;border-radius:6px;
                       border:0.5px solid #FBCFE8;background:#FFF0F6;
                       cursor:pointer;color:#BE185D;

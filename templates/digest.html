@@ -10,6 +10,7 @@
     style="font-size:11px;background:#E8FAF8;border:0.5px solid #99F6E4;color:#0F766E;
       padding:4px 10px;border-radius:7px;font-weight:500;font-family:inherit;
       cursor:pointer;max-width:240px">
+    <option value="all" {% if selected_period == 'all' %}selected{% endif %}>All Time</option>
     {% for p in all_periods %}
     <option value="{{ p }}" {% if p == selected_period %}selected{% endif %}>{{ p }}</option>
     {% endfor %}
@@ -20,12 +21,88 @@
   <i class="ti ti-calendar" style="font-size:12px;vertical-align:-2px;margin-right:4px"></i>{{ window.label }}
 </span>
 {% endif %}
-<a href="/export/excel" style="font-size:12px;font-weight:600;padding:6px 12px;border-radius:7px;background:linear-gradient(90deg,#0F766E,#0D9488);color:#fff;text-decoration:none;display:flex;align-items:center;gap:5px;box-shadow:0 2px 6px rgba(13,148,136,0.25)">
+<form method="post" action="/revalidate-urls" style="display:inline">
+  <input type="hidden" name="return_tab" value="{{ active_tab }}">
+  <input type="hidden" name="return_period" value="{{ selected_period }}">
+  <button type="submit" title="Re-check stored articles marked as broken — fixes false invalids from Cloudflare-blocked sites"
+    style="font-size:12px;font-weight:600;padding:6px 12px;border-radius:7px;background:linear-gradient(90deg,#B45309,#D97706);color:#fff;border:none;cursor:pointer;display:flex;align-items:center;gap:5px;box-shadow:0 2px 6px rgba(180,83,9,0.25)">
+    <i class="ti ti-refresh" style="font-size:13px"></i>Re-validate URLs
+  </button>
+</form>
+<form method="post" action="/fix-dates" style="display:inline">
+  <input type="hidden" name="return_tab" value="{{ active_tab }}">
+  <input type="hidden" name="return_period" value="{{ selected_period }}">
+  <button type="submit" title="Scrape article pages to recover real published dates — fixes articles where the API returned no date and the pipeline used today as a fallback"
+    style="font-size:12px;font-weight:600;padding:6px 12px;border-radius:7px;background:linear-gradient(90deg,#6D28D9,#7C3AED);color:#fff;border:none;cursor:pointer;display:flex;align-items:center;gap:5px;box-shadow:0 2px 6px rgba(109,40,217,0.25)">
+    <i class="ti ti-calendar-event" style="font-size:13px"></i>Fix Dates
+  </button>
+</form>
+<a href="/export/excel{% if selected_period %}?period={{ selected_period | urlencode }}{% endif %}" style="font-size:12px;font-weight:600;padding:6px 12px;border-radius:7px;background:linear-gradient(90deg,#0F766E,#0D9488);color:#fff;text-decoration:none;display:flex;align-items:center;gap:5px;box-shadow:0 2px 6px rgba(13,148,136,0.25)" title="Export digest report (accepted articles)">
   <i class="ti ti-download" style="font-size:13px"></i>Export Excel
+</a>
+<a href="/export/excel-full" style="font-size:12px;font-weight:600;padding:6px 12px;border-radius:7px;background:linear-gradient(90deg,#5B21B6,#7C3AED);color:#fff;text-decoration:none;display:flex;align-items:center;gap:5px;box-shadow:0 2px 6px rgba(124,58,237,0.25)" title="Full analytics including all accepted + rejected articles">
+  <i class="ti ti-table-export" style="font-size:13px"></i>Full Analytics
 </a>
 {% endblock %}
 
 {% block content %}
+<style>
+/* ── Category badge base ─────────────────────────────────────────────────── */
+.cat {
+  display:inline-flex; align-items:center;
+  font-size:10px; font-weight:600;
+  padding:3px 9px; border-radius:99px;
+  white-space:nowrap; line-height:1.4;
+  letter-spacing:0.01em;
+}
+/* Primary — solid, white text */
+.cat-ar     { background:#0F766E; color:#fff }          /* Teal   — AR/AP & Ops */
+.cat-fin    { background:#1D4ED8; color:#fff }          /* Blue   — Company Finances */
+.cat-comp   { background:#C2410C; color:#fff }          /* Orange — Compliance */
+.cat-crisis { background:#B91C1C; color:#fff }          /* Red    — Crisis / Insolvency */
+.cat-cx     { background:#BE185D; color:#fff }          /* Pink   — Customer Service */
+.cat-dt     { background:#5B21B6; color:#fff }          /* Violet — Digital Transformation */
+.cat-exp    { background:#15803D; color:#fff }          /* Green  — Expansion / Alliances */
+.cat-infra  { background:#A16207; color:#fff }          /* Amber  — Infrastructure */
+.cat-ma     { background:#3730A3; color:#fff }          /* Indigo — M&A */
+.cat-proj   { background:#0E7490; color:#fff }          /* Cyan   — New Projects */
+.cat-tech   { background:#7E22CE; color:#fff }          /* Purple — New Technologies */
+.cat-reg    { background:#334155; color:#fff }          /* Slate  — Regulatory */
+.cat-gen    { background:#475569; color:#fff }          /* Gray   — General */
+
+/* Secondary — tinted background, dark colored text, colored border */
+.cat-ar-s     { background:#CCFBF1; color:#0F766E;  border:1.5px solid #0F766E  }
+.cat-fin-s    { background:#DBEAFE; color:#1D4ED8;  border:1.5px solid #1D4ED8  }
+.cat-comp-s   { background:#FFEDD5; color:#C2410C;  border:1.5px solid #C2410C  }
+.cat-crisis-s { background:#FEE2E2; color:#B91C1C;  border:1.5px solid #B91C1C  }
+.cat-cx-s     { background:#FCE7F3; color:#BE185D;  border:1.5px solid #BE185D  }
+.cat-dt-s     { background:#EDE9FE; color:#5B21B6;  border:1.5px solid #5B21B6  }
+.cat-exp-s    { background:#DCFCE7; color:#15803D;  border:1.5px solid #15803D  }
+.cat-infra-s  { background:#FEF3C7; color:#A16207;  border:1.5px solid #A16207  }
+.cat-ma-s     { background:#E0E7FF; color:#3730A3;  border:1.5px solid #3730A3  }
+.cat-proj-s   { background:#CFFAFE; color:#0E7490;  border:1.5px solid #0E7490  }
+.cat-tech-s   { background:#F3E8FF; color:#7E22CE;  border:1.5px solid #7E22CE  }
+.cat-reg-s    { background:#E2E8F0; color:#334155;  border:1.5px solid #334155  }
+.cat-gen-s    { background:#E2E8F0; color:#475569;  border:1.5px solid #475569  }
+</style>
+
+{# Category → CSS class mapping — defined once here, used in the article loops below #}
+{% set cat_cls = {
+  "Accounts Receivable / Payable & Operational Efficiency": "cat-ar",
+  "Company Finances & Results":                            "cat-fin",
+  "Compliance Monitoring":                                 "cat-comp",
+  "Crisis / Bankruptcy & Insolvency":                      "cat-crisis",
+  "Customer Service & Experience Innovations":             "cat-cx",
+  "Digital Transformation & AI":                          "cat-dt",
+  "Expansion, Collaborations & Strategic Alliances":       "cat-exp",
+  "Infrastructure Projects & Initiatives":                 "cat-infra",
+  "Mergers, Acquisitions & Asset Transfers":               "cat-ma",
+  "New Projects / Initiatives":                            "cat-proj",
+  "New Technologies & AI Adoption":                        "cat-tech",
+  "Regulatory Developments & RFP / RFI Announcements":    "cat-reg",
+  "General — review required":                             "cat-gen",
+  "General":                                               "cat-gen",
+} %}
 
 {% if gap_report and gap_report.no_news_at_all %}
 <div style="margin-bottom:14px;padding:9px 14px;border-radius:8px;font-size:12px;display:flex;align-items:center;justify-content:space-between;background:#FFFBEB;border:0.5px solid #FCD34D;color:#92400E">
@@ -35,21 +112,21 @@
 </div>
 {% endif %}
 
-<!-- Tabs -->
+<!-- Tabs — counts reflect only entities that have articles for the selected period -->
 <div style="display:flex;gap:4px;margin-bottom:14px;border-bottom:1px solid #D4DAE8;padding-bottom:0">
-  {% for tab_id, label, count, color, light, mid in [
-    ("client",   "Clients",    clients|length,    "#1E40AF", "#EFF6FF", "#BFDBFE"),
-    ("prospect", "Prospects",  prospects|length,  "#0F766E", "#E8FAF8", "#99F6E4"),
-    ("industry", "Industries", industries|length, "#5B21B6", "#F5F3FF", "#C4B5FD")
+  {% for tab_id, label, items_list, color, light, mid in [
+    ("client",   "Clients",    clients,    "#1E40AF", "#EFF6FF", "#BFDBFE"),
+    ("prospect", "Prospects",  prospects,  "#0F766E", "#E8FAF8", "#99F6E4"),
+    ("industry", "Industries", industries, "#5B21B6", "#F5F3FF", "#C4B5FD")
   ] %}
-  <a href="/digest?tab={{ tab_id }}"
+  <a href="/digest?tab={{ tab_id }}{% if selected_period %}&period={{ selected_period | urlencode }}{% endif %}"
     style="padding:8px 16px;font-size:13px;font-weight:600;border-radius:7px 7px 0 0;text-decoration:none;margin-bottom:-1px;border:1px solid transparent;
     {% if active_tab == tab_id %}
       background:{{ light }};color:{{ color }};border-color:{{ mid }};border-bottom-color:{{ light }};
     {% else %}
       color:#94A3B8;
     {% endif %}">
-    {{ label }} <span style="font-size:11px;font-weight:400;margin-left:4px;opacity:0.7">({{ count }})</span>
+    {{ label }} <span style="font-size:11px;font-weight:400;margin-left:4px;opacity:0.7">({{ items_list|length }})</span>
   </a>
   {% endfor %}
 </div>
@@ -59,6 +136,7 @@
 {% set tab_light   = "#EFF6FF" if active_tab == 'client' else ("#E8FAF8" if active_tab == 'prospect' else "#F5F3FF") %}
 {% set tab_mid     = "#BFDBFE" if active_tab == 'client' else ("#99F6E4" if active_tab == 'prospect' else "#C4B5FD") %}
 {% set tab_acc     = "#2563EB" if active_tab == 'client' else ("#0D9488" if active_tab == 'prospect' else "#7C3AED") %}
+{% set tab_total   = total_clients if active_tab == 'client' else (total_prospects if active_tab == 'prospect' else total_industries) %}
 
 {% if active_list %}
   {% for item in active_list %}
@@ -95,49 +173,91 @@
       {% endif %}
     </div>
 
-    {% if item.news %}
     <div>
       {% for n in item.news %}
       <div style="padding:12px 16px;border-bottom:0.5px solid #F8FAFC{% if loop.last %};border-bottom:none{% endif %}">
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:4px">
           <a href="{{ n.url }}" target="_blank" rel="noopener"
             style="font-size:13px;font-weight:600;text-decoration:none;line-height:1.4;flex:1;
-              color:{% if n.url_status in ('invalid', 'unknown') %}#94A3B8{% else %}#2563EB{% endif %}">
+              color:{% if n.url_status == 'invalid' %}#94A3B8{% else %}#2563EB{% endif %}">
             {{ n.title }}
           </a>
-          <span style="font-size:11px;color:#94A3B8;white-space:nowrap;flex-shrink:0">{{ n.published_date }}</span>
+          <span style="font-size:11px;color:#94A3B8;white-space:nowrap;flex-shrink:0">{{ "Date N/A" if not n.published_date or n.published_date == "NA" else n.published_date }}</span>
         </div>
         <p style="font-size:12px;color:#475569;line-height:1.55;margin-bottom:6px">{{ n.summary }}</p>
-        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-top:2px">
+          {# Primary category — solid filled badge #}
           {% if n.primary_category %}
-          <span style="font-size:10px;background:#F1F5F9;color:#334155;padding:2px 7px;border-radius:99px;font-weight:600">{{ n.primary_category }}</span>
+          {% set pc = cat_cls.get(n.primary_category, "cat-gen") %}
+          <span class="cat {{ pc }}">{{ n.primary_category }}</span>
           {% endif %}
+          {# Secondary category — tinted outlined badge #}
           {% if n.secondary_category %}
-          <span style="font-size:10px;background:#F1F5F9;color:#334155;padding:2px 7px;border-radius:99px">{{ n.secondary_category }}</span>
+          {% set sc = cat_cls.get(n.secondary_category, "cat-gen") %}
+          <span class="cat {{ sc }}-s">{{ n.secondary_category }}</span>
           {% endif %}
-          <span style="font-size:11px;color:#94A3B8">{{ n.source }}</span>
+          {# Source link — subtle separator before source #}
+          <span style="font-size:10px;color:#CBD5E1;font-weight:300;margin:0 1px">·</span>
+          <span style="font-size:11px;color:#64748B">{{ n.source | source_link | safe }}</span>
+          {# Fetch API badge #}
+          {% if n.fetch_source %}
+          {% set api_labels = {"tavily": "Tavily", "serpapi": "Google News", "newsdata": "NewsData.io", "newsapi": "NewsAPI.org", "newsai": "NewsAPI.ai"} %}
+          <span style="font-size:10px;background:#F1F5F9;color:#64748B;border:0.5px solid #CBD5E1;padding:2px 7px;border-radius:99px;font-weight:500">{{ api_labels.get(n.fetch_source, n.fetch_source) }}</span>
+          {% endif %}
+          {# Paywall warning #}
           {% if n.paywall_note %}
-          <span style="font-size:10px;background:#FFFBEB;color:#92400E;border:0.5px solid #FCD34D;padding:2px 7px;border-radius:99px">⚠ Subscription source</span>
+          <span style="font-size:10px;background:#FEF3C7;color:#92400E;border:1.5px solid #D97706;padding:3px 9px;border-radius:99px;font-weight:600">⚠ Subscription</span>
           {% endif %}
-          {% if n.url_status in ('invalid', 'unknown') %}
-          <span style="font-size:10px;background:#FFF0F6;color:#BE185D;border:0.5px solid #FBCFE8;padding:2px 7px;border-radius:99px">⚠ Link may be broken</span>
+          {# Broken / unverified link warning #}
+          {% if n.url_status == 'invalid' %}
+          <span style="font-size:10px;background:#FEE2E2;color:#B91C1C;border:1.5px solid #DC2626;padding:3px 9px;border-radius:99px;font-weight:600">⚠ Link broken</span>
+          {% elif n.url_status == 'unknown' %}
+          <span style="font-size:10px;background:#FEF3C7;color:#92400E;border:1.5px solid #D97706;padding:3px 9px;border-radius:99px;font-weight:600">⚠ Link unverified</span>
           {% endif %}
         </div>
       </div>
       {% endfor %}
     </div>
-    {% else %}
-    <div style="padding:20px 16px;text-align:center;font-size:12px;color:#94A3B8;font-style:italic">
-      No news fetched yet — run a fetch from the Entities page.
-    </div>
-    {% endif %}
   </div>
   {% endfor %}
-{% else %}
+
+{% elif not all_periods %}
+<!-- No pipeline run has ever happened -->
+<div style="text-align:center;padding:60px 20px;color:#94A3B8">
+  <i class="ti ti-news-off" style="font-size:40px;display:block;margin-bottom:12px"></i>
+  <p style="font-size:15px;font-weight:700;color:#475569;margin-bottom:6px">No news fetched yet.</p>
+  <p style="font-size:13px;margin-bottom:16px">Run a fetch from the Entities page to get started.</p>
+  <a href="/" style="font-size:12px;font-weight:600;color:#fff;background:#2563EB;text-decoration:none;padding:8px 18px;border-radius:7px;display:inline-flex;align-items:center;gap:5px">
+    <i class="ti ti-arrow-left" style="font-size:12px"></i>Go to Entities →
+  </a>
+</div>
+
+{% elif tab_total == 0 %}
+<!-- No entities of this type at all -->
 <div style="text-align:center;padding:60px 20px;color:#94A3B8">
   <i class="ti ti-inbox" style="font-size:40px;display:block;margin-bottom:12px"></i>
-  <p style="font-size:14px;font-weight:600;margin-bottom:4px">No entities here yet.</p>
+  <p style="font-size:14px;font-weight:600;margin-bottom:4px">No {{ active_tab }}s added yet.</p>
   <a href="/" style="font-size:12px;color:#2563EB;text-decoration:none">Add some on the Entities page →</a>
 </div>
+
+{% else %}
+<!-- Entities exist but none have news for this period -->
+<div style="text-align:center;padding:60px 20px;color:#94A3B8">
+  <i class="ti ti-article-off" style="font-size:40px;display:block;margin-bottom:12px"></i>
+  <p style="font-size:14px;font-weight:600;color:#475569;margin-bottom:4px">
+    No news found for any {{ active_tab }}s in this period.
+  </p>
+  <p style="font-size:12px;margin-bottom:6px">
+    {% if selected_period %}
+    No articles were fetched for <strong>{{ selected_period }}</strong>.
+    {% else %}
+    Try selecting a different report period or running a new fetch.
+    {% endif %}
+  </p>
+  <a href="/gaps" style="font-size:12px;color:#D97706;font-weight:600;text-decoration:none">
+    <i class="ti ti-alert-triangle" style="font-size:11px;vertical-align:-1px"></i> View Gap Report →
+  </a>
+</div>
 {% endif %}
+
 {% endblock %}

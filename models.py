@@ -33,6 +33,7 @@ class Entity(BaseModel):
     website:       Optional[str] = ""   # company website — used to sharpen search queries
     industry_type: Optional[str] = ""   # sector / sub-type (industries only)
     news_scope:    Optional[str] = ""   # what kinds of news to focus on (industries only)
+    aliases:       Optional[List[str]] = []  # alternate names / short names for relevance matching
 
 
 class NewsItem(BaseModel):
@@ -66,7 +67,7 @@ class NewsItem(BaseModel):
     # ── Fetch metadata ─────────────────────────────────────────────────────────
     topic_queried:      Optional[str]  = ""      # which of 12 topics found this
     is_primary_topic:   Optional[bool] = False   # was topic assigned to entity?
-    fetch_source:       Optional[str]  = ""      # "tavily" | "gnews"
+    fetch_source:       Optional[str]  = ""      # "tavily" | "serpapi" | "newsdata" | "newsapi" | "newsai"
 
 
 class AuditEntry(BaseModel):

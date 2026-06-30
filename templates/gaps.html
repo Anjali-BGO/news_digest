@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "macros.html" import empty_state, entity_type_badge %}
 {% block title %}Gap Report — News Digest{% endblock %}
 {% block page_title %}Gap Report{% endblock %}
 
@@ -13,12 +14,72 @@
 
 {% block content %}
 {% if not gap_report %}
-<div style="text-align:center;padding:60px 20px;color:#94A3B8">
-  <i class="ti ti-chart-bar" style="font-size:40px;display:block;margin-bottom:12px"></i>
-  <p style="font-size:14px;font-weight:600;margin-bottom:4px">No gap report yet.</p>
-  <p style="font-size:12px">Run a news fetch first to generate the gap report.</p>
-</div>
+{{ empty_state("chart-bar", "No gap report yet.", "Run a news fetch first to generate the gap report.") }}
 {% else %}
+
+<!-- Exhausted sources banner -->
+{% if gap_report.exhausted_sources %}
+<div style="background:#FFF0F6;border:0.5px solid #FBCFE8;border-radius:10px;padding:12px 16px;margin-bottom:12px;display:flex;align-items:flex-start;gap:10px">
+  <i class="ti ti-alert-triangle" style="font-size:18px;color:#BE185D;flex-shrink:0;margin-top:1px"></i>
+  <div>
+    <div style="font-size:13px;font-weight:700;color:#BE185D;margin-bottom:4px">API Credits Exhausted During This Run</div>
+    <div style="font-size:12px;color:#4C0519;line-height:1.6">
+      The following sources ran out of credits and were automatically disabled — no further calls were made to them:
+      {% for s in gap_report.exhausted_sources %}
+      <span style="font-size:10px;background:#BE185D;color:#fff;padding:2px 8px;border-radius:99px;font-weight:600;margin:0 3px">{{ s }}</span>
+      {% endfor %}
+      <br>Articles from these sources are missing from this run. Top up your API plan to restore full coverage.
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- Entity fetch summary -->
+{% if gap_report.entity_summary %}
+<div style="background:#fff;border-radius:10px;border:0.5px solid #D4DAE8;overflow:hidden;margin-bottom:12px;box-shadow:0 2px 6px rgba(0,0,0,0.05)">
+  <div style="padding:10px 14px;display:flex;align-items:center;gap:8px;border-bottom:0.5px solid #D4DAE8;background:linear-gradient(90deg,#F0FDF4,#FAFFFE)">
+    <div style="width:3px;height:14px;border-radius:99px;background:#16A34A;flex-shrink:0"></div>
+    <span style="font-size:13px;font-weight:700;color:#14532D">Fetch Summary — all entities</span>
+    <span style="font-size:10px;color:#94A3B8;background:#F1F5F9;padding:2px 7px;border-radius:99px;border:0.5px solid #D4DAE8">{{ gap_report.entity_summary|length }} entities</span>
+  </div>
+  <div style="overflow-x:auto">
+  <table style="width:100%;border-collapse:collapse">
+    <thead><tr>
+      <th style="text-align:left;padding:7px 14px;font-size:10px;font-weight:700;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;border-bottom:0.5px solid #F1F5F9;white-space:nowrap">Entity</th>
+      <th style="text-align:left;padding:7px 14px;font-size:10px;font-weight:700;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;border-bottom:0.5px solid #F1F5F9;white-space:nowrap">Type</th>
+      <th style="text-align:right;padding:7px 14px;font-size:10px;font-weight:700;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;border-bottom:0.5px solid #F1F5F9;white-space:nowrap">Raw fetched</th>
+      <th style="text-align:right;padding:7px 14px;font-size:10px;font-weight:700;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;border-bottom:0.5px solid #F1F5F9;white-space:nowrap">Saved</th>
+      <th style="text-align:center;padding:7px 14px;font-size:10px;font-weight:700;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;border-bottom:0.5px solid #F1F5F9;white-space:nowrap">Status</th>
+    </tr></thead>
+    <tbody>
+    {% for item in gap_report.entity_summary %}
+    <tr style="border-bottom:0.5px solid #F8FAFC" onmouseover="this.style.background='#F9FAFB'" onmouseout="this.style.background=''">
+      <td style="padding:9px 14px;font-size:13px;font-weight:600;color:#0F172A">{{ item.name }}</td>
+      <td style="padding:9px 14px">{{ entity_type_badge(item.type) }}</td>
+      <td style="padding:9px 14px;text-align:right;font-size:12px;color:#64748B">{{ item.raw }}</td>
+      <td style="padding:9px 14px;text-align:right">
+        {% if item.final > 0 %}
+        <span style="font-size:12px;font-weight:700;color:#16A34A">{{ item.final }}</span>
+        {% else %}
+        <span style="font-size:12px;color:#CBD5E1">0</span>
+        {% endif %}
+      </td>
+      <td style="padding:9px 14px;text-align:center">
+        {% if item.final > 0 %}
+        <span style="font-size:10px;background:#F0FDF4;color:#14532D;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid #86EFAC">News found</span>
+        {% elif item.raw > 0 %}
+        <span style="font-size:10px;background:#FFFBEB;color:#92400E;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid #FCD34D">Filtered out</span>
+        {% else %}
+        <span style="font-size:10px;background:#FFF1F2;color:#BE123C;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid #FECDD3">No news</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endif %}
 
 <!-- No news at all -->
 <div style="background:#fff;border-radius:10px;border:0.5px solid #D4DAE8;overflow:hidden;margin-bottom:12px;box-shadow:0 2px 6px rgba(0,0,0,0.05)">
@@ -37,14 +98,7 @@
     {% for item in gap_report.no_news_at_all %}
     <tr style="border-bottom:0.5px solid #F8FAFC">
       <td style="padding:10px 14px;font-size:13px;font-weight:600;color:#0F172A">{{ item.name }}</td>
-      <td style="padding:10px 14px">
-        <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;
-          {% if item.type == 'client' %}background:#EFF6FF;color:#1E40AF
-          {% elif item.type == 'prospect' %}background:#E8FAF8;color:#0F766E
-          {% else %}background:#F5F3FF;color:#5B21B6{% endif %}">
-          {{ item.type|capitalize }}
-        </span>
-      </td>
+      <td style="padding:10px 14px">{{ entity_type_badge(item.type) }}</td>
     </tr>
     {% endfor %}
     </tbody>
@@ -69,12 +123,7 @@
     <div style="border:0.5px solid #E2E8F0;border-radius:8px;padding:10px 12px">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
         <span style="font-size:13px;font-weight:700;color:#0F172A">{{ name }}</span>
-        <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;
-          {% if info.entity_type == 'client' %}background:#EFF6FF;color:#1E40AF
-          {% elif info.entity_type == 'prospect' %}background:#E8FAF8;color:#0F766E
-          {% else %}background:#F5F3FF;color:#5B21B6{% endif %}">
-          {{ info.entity_type|capitalize }}
-        </span>
+        {{ entity_type_badge(info.entity_type) }}
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:4px">
         {% for topic in info.missing_topics %}

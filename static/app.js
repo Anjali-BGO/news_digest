@@ -14,6 +14,13 @@
       }
     } catch (e) {
       clearInterval(poll);
+      const msgEl = banner.querySelector('span');
+      if (msgEl) {
+        banner.style.background    = '#FFF0F6';
+        banner.style.borderColor   = '#FBCFE8';
+        banner.style.color         = '#BE185D';
+        msgEl.textContent = '⚠ Connection lost — please reload the page to check run status.';
+      }
     }
   }, 5000);
 })();

@@ -1,9 +1,14 @@
 {% extends "base.html" %}
+{% from "macros.html" import empty_state %}
 {% block title %}Audit Log — News Digest{% endblock %}
 {% block page_title %}Audit Log{% endblock %}
 
 {% block topbar_right %}
-<span style="font-size:11px;color:#94A3B8">{{ entries|length }} total entries</span>
+{% if total_count > limit %}
+<span style="font-size:11px;color:#D97706;font-weight:600">Showing latest {{ limit }} of {{ total_count }} entries</span>
+{% else %}
+<span style="font-size:11px;color:#94A3B8">{{ total_count }} total entries</span>
+{% endif %}
 {% endblock %}
 
 {% block content %}
@@ -31,8 +36,12 @@
           <span style="font-size:10px;background:#EFF6FF;color:#1E40AF;padding:2px 8px;border-radius:99px;font-weight:600">Duplicate</span>
           {% elif e.action == 'validation_rejected' %}
           <span style="font-size:10px;background:#FFF0F6;color:#BE185D;padding:2px 8px;border-radius:99px;font-weight:600">Rejected</span>
+          {% elif e.action == 'url_invalid' %}
+          <span style="font-size:10px;background:#F0FDFA;color:#0F766E;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid #99F6E4">URL Invalid</span>
+          {% elif e.action == 'accepted' %}
+          <span style="font-size:10px;background:#F0FDF4;color:#14532D;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid #86EFAC">Accepted</span>
           {% else %}
-          <span style="font-size:10px;background:#FFFBEB;color:#92400E;padding:2px 8px;border-radius:99px;font-weight:600">{{ e.action }}</span>
+          <span style="font-size:10px;background:#F1F5F9;color:#64748B;padding:2px 8px;border-radius:99px;font-weight:600">{{ e.action }}</span>
           {% endif %}
         </td>
         <td style="padding:9px 14px;color:#334155;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ e.article_title }}</td>
@@ -49,10 +58,6 @@
   </div>
 </div>
 {% else %}
-<div style="text-align:center;padding:60px 20px;color:#94A3B8">
-  <i class="ti ti-clipboard-list" style="font-size:40px;display:block;margin-bottom:12px"></i>
-  <p style="font-size:14px;font-weight:600;margin-bottom:4px">No audit entries yet.</p>
-  <p style="font-size:12px">Entries are created automatically when news is fetched.</p>
-</div>
+{{ empty_state("clipboard-list", "No audit entries yet.", "Entries are created automatically when news is fetched.") }}
 {% endif %}
 {% endblock %}
