@@ -9,7 +9,7 @@ An internal productivity tool that fully automates the end-to-end news intellige
 ## What It Does
 
 - Fetches news for every entity across **all 12 business topic categories** individually
-- Supports **5 selectable API sources**: Tavily (default), SerpAPI (Google News), NewsData.io, NewsAPI.org, and NewsAPI.ai — mix and match per run
+- Supports **4 selectable API sources**: Tavily (default), SerpAPI (Google News), NewsData.io, and NewsAPI.ai — mix and match per run
 - Builds **context-aware search queries** — appends entity website domain or "company" qualifier to prevent name ambiguity in search results
 - Runs **two-pass deduplication** (exact URL + headline similarity) — no AI, pure Python
 - Validates every article through an **8-point checklist** — 7 hard rejects + 1 soft paywall tag
@@ -55,8 +55,7 @@ Every entity is queried against all 12 categories regardless of which are assign
 | News source 1 | Tavily API (primary, default) |
 | News source 2 | SerpAPI — Google News tab (engine=google, tbm=nws) |
 | News source 3 | NewsData.io |
-| News source 4 | NewsAPI.org |
-| News source 5 | NewsAPI.ai (EventRegistry) — entity-focused POST API |
+| News source 4 | NewsAPI.ai (EventRegistry) — entity-focused POST API |
 | AI summarisation | OpenAI GPT-4o-mini |
 | Deduplication | Python `difflib` (no AI) |
 | Hyperlink check | `httpx` + OpenAI web search fallback (Layer 3) |
@@ -78,7 +77,7 @@ news_digest/
 ├── logger.py                        # Structured rotating file logger
 │
 ├── services/
-│   ├── news_fetcher.py              # Tavily + SerpAPI + NewsData + NewsAPI — per-topic querying
+│   ├── news_fetcher.py              # Tavily + SerpAPI + NewsData + NewsAPI.ai — per-topic querying
 │   ├── deduplicator.py              # URL match + difflib headline similarity
 │   ├── validator.py                 # 8-point article validation (7 hard rejects + 1 soft paywall tag)
 │   ├── hyperlink_validator.py       # 4-layer URL reachability check
@@ -167,14 +166,14 @@ TAVILY_API_KEY=tvly-...
 # Optional additional news sources
 SERPAPI_API_KEY=your_serpapi_key_here
 NEWSDATA_API_KEY=your_newsdata_key_here
-NEWSAPI_API_KEY=your_newsapi_key_here
+NEWSAI_API_KEY=your_newsai_key_here
 
 # Articles fetched per topic per source (default: 5)
 # Set to 2–3 for testing to minimise API usage
 TAVILY_MAX_RESULTS=5
 SERPAPI_MAX_RESULTS=5
 NEWSDATA_MAX_RESULTS=5
-NEWSAPI_MAX_RESULTS=5
+NEWSAI_MAX_RESULTS=5
 
 # Hard cap on raw articles per entity before dedup/validation (0 = no cap)
 MAX_ARTICLES_PER_ENTITY=0
@@ -200,7 +199,6 @@ Open **http://localhost:8000**
 | Tavily | 1,000 credits/month free (pilot only) | https://app.tavily.com |
 | SerpAPI | 100 searches/month free | https://serpapi.com |
 | NewsData.io | 200 requests/day free | https://newsdata.io |
-| NewsAPI.org | 100 requests/day free, 30-day history | https://newsapi.org |
 | NewsAPI.ai | 1,000 articles/month free | https://newsapi.ai |
 
 > For production with 120 entities, switch Tavily to Pay-as-you-go ($0.008/credit). The other sources can supplement Tavily or replace it for higher volume.
@@ -363,7 +361,7 @@ Each entity + topic pair generates a natural-language query used by all four API
 | Client/prospect, no website | `Latest news on Entity Name company related to Topic Category` |
 | Industry entity, no website | `Latest news on Entity Name related to Topic Category` |
 
-Natural-language format avoids quoted strings and bare `&` characters that cause parse errors in NewsData.io and NewsAPI.org. The domain or "company" qualifier disambiguates companies that share a keyword with an unrelated entity name.
+Natural-language format avoids quoted strings and bare `&` characters that cause parse errors in NewsData.io. The domain or "company" qualifier disambiguates companies that share a keyword with an unrelated entity name.
 
 Social media and forum domains are excluded at the Tavily API level (via `exclude_domains`) before results reach the validator.
 

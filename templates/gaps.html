@@ -3,74 +3,225 @@
 {% block title %}Gap Report — News Digest{% endblock %}
 {% block page_title %}Gap Report{% endblock %}
 
+{% macro api_badge(src) %}
+{% if src == 'tavily' %}<span style="font-size:9px;background:#EFF6FF;color:#1E40AF;padding:1px 6px;border-radius:99px;font-weight:700;border:0.5px solid #BFDBFE">Tavily</span>
+{% elif src == 'serpapi' %}<span style="font-size:9px;background:#F0FDF4;color:#15803D;padding:1px 6px;border-radius:99px;font-weight:700;border:0.5px solid #86EFAC">SerpAPI</span>
+{% elif src == 'newsdata_io' %}<span style="font-size:9px;background:#F5F3FF;color:#6D28D9;padding:1px 6px;border-radius:99px;font-weight:700;border:0.5px solid #C4B5FD">NewsData</span>
+{% elif src == 'newsapi_ai' %}<span style="font-size:9px;background:#F0FDFA;color:#0F766E;padding:1px 6px;border-radius:99px;font-weight:700;border:0.5px solid #99F6E4">NewsAPI.ai</span>
+{% else %}<span style="font-size:9px;background:#F1F5F9;color:#475569;padding:1px 6px;border-radius:99px;font-weight:700;border:0.5px solid #D4DAE8">{{ src }}</span>
+{% endif %}
+{% endmacro %}
+
 {% block topbar_right %}
-{% if gap_report %}
-<span style="font-size:11px;background:#FFFBEB;border:0.5px solid #FCD34D;color:#92400E;padding:4px 10px;border-radius:7px;font-weight:500">
-  <i class="ti ti-calendar" style="font-size:12px;vertical-align:-2px;margin-right:4px"></i>
-  {{ gap_report.window.label if gap_report.window else gap_report.period }}
-</span>
+<span style="font-size:11px;color:#94A3B8">{{ all_reports|length }} run{{ 's' if all_reports|length != 1 else '' }} recorded</span>
+{% if all_reports %}
+<a href="/export/gap-report" style="display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:7px;background:#16A34A;color:#fff;font-size:11px;font-weight:600;text-decoration:none;border:none">
+  <i class="ti ti-download" style="font-size:12px"></i> Download All Runs
+</a>
 {% endif %}
 {% endblock %}
 
 {% block content %}
-{% if not gap_report %}
+{% if not all_reports %}
 {{ empty_state("chart-bar", "No gap report yet.", "Run a news fetch first to generate the gap report.") }}
 {% else %}
 
-<!-- Exhausted sources banner -->
-{% if gap_report.exhausted_sources %}
-<div style="background:#FFF0F6;border:0.5px solid #FBCFE8;border-radius:10px;padding:12px 16px;margin-bottom:12px;display:flex;align-items:flex-start;gap:10px">
-  <i class="ti ti-alert-triangle" style="font-size:18px;color:#BE185D;flex-shrink:0;margin-top:1px"></i>
-  <div>
-    <div style="font-size:13px;font-weight:700;color:#BE185D;margin-bottom:4px">API Credits Exhausted During This Run</div>
-    <div style="font-size:12px;color:#4C0519;line-height:1.6">
-      The following sources ran out of credits and were automatically disabled — no further calls were made to them:
-      {% for s in gap_report.exhausted_sources %}
-      <span style="font-size:10px;background:#BE185D;color:#fff;padding:2px 8px;border-radius:99px;font-weight:600;margin:0 3px">{{ s }}</span>
+<!-- ── Run selector ─────────────────────────────────────────────────────────── -->
+{% if all_reports|length > 1 %}
+<div style="background:#fff;border-radius:10px;border:0.5px solid #D4DAE8;padding:12px 16px;margin-bottom:10px;display:flex;align-items:center;gap:12px;box-shadow:0 2px 6px rgba(0,0,0,0.04)">
+  <i class="ti ti-history" style="font-size:16px;color:#64748B;flex-shrink:0"></i>
+  <span style="font-size:12px;font-weight:600;color:#374151;flex-shrink:0">Select Run:</span>
+  <form method="get" action="/gaps" style="flex:1;display:flex;align-items:center;gap:8px">
+    <select name="run_idx" onchange="this.form.submit()" style="flex:1;max-width:520px;padding:5px 9px;border-radius:6px;border:0.5px solid #D4DAE8;font-size:12px;font-family:var(--f);color:#0F172A;background:#fff">
+      {% for rpt in all_reports %}
+      <option value="{{ loop.index0 }}" {% if loop.index0 == selected_idx %}selected{% endif %}>
+        {% if loop.index0 == 0 %}★ Latest — {% endif %}
+        {{ rpt.started_at or rpt.run_date }}
+        {% if rpt.window %} · {{ rpt.window.from }} → {{ rpt.window.to }}{% endif %}
+        {% if rpt.entity_name %} · {{ rpt.entity_name }}{% endif %}
+        ({% if rpt.total_articles is defined %}{{ rpt.total_articles }} accepted{% else %}run{% endif %})
+      </option>
       {% endfor %}
-      <br>Articles from these sources are missing from this run. Top up your API plan to restore full coverage.
-    </div>
-  </div>
+    </select>
+  </form>
 </div>
 {% endif %}
 
-<!-- Entity fetch summary -->
-{% if gap_report.entity_summary %}
-<div style="background:#fff;border-radius:10px;border:0.5px solid #D4DAE8;overflow:hidden;margin-bottom:12px;box-shadow:0 2px 6px rgba(0,0,0,0.05)">
+{% if gap_report %}
+
+<!-- ── Run stats bar ───────────────────────────────────────────────────────── -->
+{% set raw_f = gap_report.raw_fetched or 0 %}
+{% set dupes_f = gap_report.duplicates_removed or 0 %}
+{% set rej_f = gap_report.articles_rejected or 0 %}
+{% set acc_f = gap_report.total_articles or 0 %}
+{% set after_dd = [raw_f - dupes_f, 0]|max %}
+{% set acc_pct = ((acc_f / raw_f * 100)|round(1)) if raw_f else 0 %}
+{% set val_acc = ((acc_f / after_dd * 100)|round(1)) if after_dd else 0 %}
+
+<div style="background:#fff;border-radius:10px;border:0.5px solid #D4DAE8;padding:14px 16px;margin-bottom:10px;box-shadow:0 2px 6px rgba(0,0,0,0.04)">
+  <div style="display:flex;align-items:flex-start;gap:20px;flex-wrap:wrap">
+    <!-- Period -->
+    <div style="flex:1;min-width:200px">
+      <div style="font-size:10px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:4px">Report Period</div>
+      {% if gap_report.window %}
+      <div style="font-size:13px;font-weight:700;color:#1E40AF">
+        {{ gap_report.window.from or '—' }} <span style="color:#93C5FD;margin:0 5px">→</span> {{ gap_report.window.to or '—' }}
+        {% if gap_report.window.days is defined %}
+        <span style="font-size:11px;font-weight:400;color:#60A5FA;margin-left:6px">({{ gap_report.window.days }}d)</span>
+        {% endif %}
+      </div>
+      {% endif %}
+      <div style="font-size:10px;color:#94A3B8;margin-top:3px">
+        Run: {{ gap_report.started_at or gap_report.run_date or '—' }}
+        {% if gap_report.duration_seconds %}· {{ gap_report.duration_seconds }}s{% endif %}
+        {% if gap_report.status %}
+          · <span style="font-weight:600;color:{% if gap_report.status == 'completed' %}#16A34A{% elif gap_report.status == 'cancelled' %}#D97706{% else %}#BE185D{% endif %}">{{ gap_report.status|capitalize }}</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- APIs used -->
+    {% if gap_report.api_sources_used %}
+    <div style="flex-shrink:0">
+      <div style="font-size:10px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:6px">APIs Used</div>
+      <div style="display:flex;gap:4px;flex-wrap:wrap">
+        {% for src in gap_report.api_sources_used %}{{ api_badge(src) }}{% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Pipeline stats -->
+    {% if raw_f %}
+    <div style="flex-shrink:0">
+      <div style="font-size:10px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:6px">Pipeline Flow</div>
+      <div style="display:flex;align-items:center;gap:6px;font-size:12px">
+        <span style="font-weight:700;color:#334155">{{ raw_f }}</span>
+        <span style="color:#CBD5E1">raw</span>
+        <span style="color:#94A3B8">→</span>
+        <span style="font-weight:600;color:#BE185D">−{{ dupes_f }}</span>
+        <span style="color:#CBD5E1">dupes</span>
+        <span style="color:#94A3B8">→</span>
+        <span style="font-weight:600;color:#D97706">−{{ rej_f }}</span>
+        <span style="color:#CBD5E1">rejected</span>
+        <span style="color:#94A3B8">→</span>
+        <span style="font-weight:700;color:#16A34A;font-size:13px">{{ acc_f }}</span>
+        <span style="color:#CBD5E1">accepted</span>
+      </div>
+    </div>
+
+    <!-- Rates -->
+    <div style="flex-shrink:0">
+      <div style="font-size:10px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:6px">Accuracy</div>
+      <div style="display:flex;gap:10px">
+        <div style="text-align:center">
+          <div style="font-size:16px;font-weight:700;color:#16A34A">{{ acc_pct }}%</div>
+          <div style="font-size:9px;color:#94A3B8">Acceptance<br>Rate</div>
+        </div>
+        <div style="width:0.5px;background:#E2E8F0"></div>
+        <div style="text-align:center">
+          <div style="font-size:16px;font-weight:700;color:#2563EB">{{ val_acc }}%</div>
+          <div style="font-size:9px;color:#94A3B8">Validation<br>Accuracy</div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Accuracy explanation tooltip -->
+  <div style="margin-top:10px;padding:8px 12px;background:#F8FAFC;border-radius:6px;border:0.5px solid #E2E8F0;font-size:10px;color:#64748B;line-height:1.6">
+    <i class="ti ti-info-circle" style="font-size:11px;vertical-align:-1px;color:#94A3B8;margin-right:4px"></i>
+    <strong>Validation Accuracy</strong> = Accepted ÷ (Raw − Duplicates) × 100.
+    Measures what % of unique articles passed all 8 validation checks.
+    <strong>Acceptance Rate</strong> = Accepted ÷ Raw Fetched × 100 (includes deduplication effect).
+    Soft-tagged articles (short preview, paywall) pass through and count as Accepted.
+  </div>
+</div>
+
+<!-- ── Exhausted sources banner ─────────────────────────────────────────────── -->
+{% if gap_report.exhausted_sources %}
+<div id="exhausted-banner" style="background:#FFF0F6;border:0.5px solid #FBCFE8;border-radius:10px;padding:12px 16px;margin-bottom:10px;display:flex;align-items:flex-start;gap:10px">
+  <i class="ti ti-alert-triangle" style="font-size:18px;color:#BE185D;flex-shrink:0;margin-top:1px"></i>
+  <div style="flex:1">
+    <div style="font-size:13px;font-weight:700;color:#BE185D;margin-bottom:4px">API Credits Exhausted During This Run</div>
+    <div style="font-size:12px;color:#4C0519;line-height:1.6">
+      {% for s in gap_report.exhausted_sources %}{{ api_badge(s) }}{% endfor %}
+      <span style="margin-left:6px">ran out of credits — no further calls were made. Articles from these sources are missing. Top up your API plan to restore coverage.</span>
+    </div>
+  </div>
+  <button onclick="document.getElementById('exhausted-banner').style.display='none'" style="background:none;border:none;font-size:16px;color:#BE185D;cursor:pointer;padding:0;line-height:1;flex-shrink:0" title="Dismiss">✕</button>
+</div>
+{% endif %}
+
+<!-- ── Filters ─────────────────────────────────────────────────────────────── -->
+<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+  <span style="font-size:11px;font-weight:600;color:#64748B">Filter:</span>
+  <!-- Entity type -->
+  {% for key, lbl in [('all','All Types'),('client','Clients'),('prospect','Prospects'),('industry','Industries')] %}
+  <button onclick="filterGapTable('type','{{ key }}')" data-gap-type="{{ key }}"
+    style="padding:4px 12px;border-radius:7px;font-size:11px;font-weight:600;cursor:pointer;border:0.5px solid #D4DAE8;background:#fff;color:#64748B;font-family:var(--f)">{{ lbl }}</button>
+  {% endfor %}
+  <span style="width:0.5px;height:18px;background:#E2E8F0;display:inline-block;margin:0 4px"></span>
+  <!-- Status -->
+  {% for key, lbl in [('all','All Statuses'),('found','News Found'),('filtered','Filtered Out'),('none','No News')] %}
+  <button onclick="filterGapTable('status','{{ key }}')" data-gap-status="{{ key }}"
+    style="padding:4px 12px;border-radius:7px;font-size:11px;font-weight:600;cursor:pointer;border:0.5px solid #D4DAE8;background:#fff;color:#64748B;font-family:var(--f)">{{ lbl }}</button>
+  {% endfor %}
+  <span style="margin-left:auto;font-size:11px;color:#94A3B8" id="gap-visible-count">{{ enriched_summary|length }} entities</span>
+</div>
+
+<!-- ── Entity fetch summary ─────────────────────────────────────────────────── -->
+{% if enriched_summary %}
+<div style="background:#fff;border-radius:10px;border:0.5px solid #D4DAE8;overflow:hidden;margin-bottom:10px;box-shadow:0 2px 6px rgba(0,0,0,0.05)">
   <div style="padding:10px 14px;display:flex;align-items:center;gap:8px;border-bottom:0.5px solid #D4DAE8;background:linear-gradient(90deg,#F0FDF4,#FAFFFE)">
     <div style="width:3px;height:14px;border-radius:99px;background:#16A34A;flex-shrink:0"></div>
-    <span style="font-size:13px;font-weight:700;color:#14532D">Fetch Summary — all entities</span>
-    <span style="font-size:10px;color:#94A3B8;background:#F1F5F9;padding:2px 7px;border-radius:99px;border:0.5px solid #D4DAE8">{{ gap_report.entity_summary|length }} entities</span>
+    <span style="font-size:13px;font-weight:700;color:#14532D">Entity Fetch Summary</span>
+    <span style="font-size:10px;color:#94A3B8;background:#F1F5F9;padding:2px 7px;border-radius:99px;border:0.5px solid #D4DAE8">{{ enriched_summary|length }} entities</span>
   </div>
   <div style="overflow-x:auto">
-  <table style="width:100%;border-collapse:collapse">
+  <table style="width:100%;border-collapse:collapse" id="gap-entity-table">
     <thead><tr>
       <th style="text-align:left;padding:7px 14px;font-size:10px;font-weight:700;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;border-bottom:0.5px solid #F1F5F9;white-space:nowrap">Entity</th>
       <th style="text-align:left;padding:7px 14px;font-size:10px;font-weight:700;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;border-bottom:0.5px solid #F1F5F9;white-space:nowrap">Type</th>
-      <th style="text-align:right;padding:7px 14px;font-size:10px;font-weight:700;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;border-bottom:0.5px solid #F1F5F9;white-space:nowrap">Raw fetched</th>
-      <th style="text-align:right;padding:7px 14px;font-size:10px;font-weight:700;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;border-bottom:0.5px solid #F1F5F9;white-space:nowrap">Saved</th>
+      <th style="text-align:right;padding:7px 14px;font-size:10px;font-weight:700;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;border-bottom:0.5px solid #F1F5F9;white-space:nowrap">Raw</th>
+      <th style="text-align:right;padding:7px 14px;font-size:10px;font-weight:700;color:#16A34A;letter-spacing:0.06em;text-transform:uppercase;border-bottom:0.5px solid #F1F5F9;white-space:nowrap">Accepted</th>
+      <th style="text-align:right;padding:7px 14px;font-size:10px;font-weight:700;color:#D97706;letter-spacing:0.06em;text-transform:uppercase;border-bottom:0.5px solid #F1F5F9;white-space:nowrap">Filtered</th>
+      <th style="text-align:center;padding:7px 14px;font-size:10px;font-weight:700;color:#2563EB;letter-spacing:0.06em;text-transform:uppercase;border-bottom:0.5px solid #F1F5F9;white-space:nowrap">Topic Coverage</th>
       <th style="text-align:center;padding:7px 14px;font-size:10px;font-weight:700;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;border-bottom:0.5px solid #F1F5F9;white-space:nowrap">Status</th>
     </tr></thead>
     <tbody>
-    {% for item in gap_report.entity_summary %}
-    <tr style="border-bottom:0.5px solid #F8FAFC" onmouseover="this.style.background='#F9FAFB'" onmouseout="this.style.background=''">
+    {% for item in enriched_summary %}
+    {% if item.final > 0 %}{% set status_key = 'found' %}
+    {% elif item.raw > 0 %}{% set status_key = 'filtered' %}
+    {% else %}{% set status_key = 'none' %}{% endif %}
+    <tr data-type="{{ item.type }}" data-status="{{ status_key }}"
+        style="border-bottom:0.5px solid #F8FAFC" onmouseover="this.style.background='#F9FAFB'" onmouseout="this.style.background=''">
       <td style="padding:9px 14px;font-size:13px;font-weight:600;color:#0F172A">{{ item.name }}</td>
       <td style="padding:9px 14px">{{ entity_type_badge(item.type) }}</td>
-      <td style="padding:9px 14px;text-align:right;font-size:12px;color:#64748B">{{ item.raw }}</td>
+      <td style="padding:9px 14px;text-align:right;font-size:12px;color:#64748B;font-weight:500">{{ item.raw }}</td>
       <td style="padding:9px 14px;text-align:right">
-        {% if item.final > 0 %}
-        <span style="font-size:12px;font-weight:700;color:#16A34A">{{ item.final }}</span>
-        {% else %}
-        <span style="font-size:12px;color:#CBD5E1">0</span>
-        {% endif %}
+        {% if item.final > 0 %}<span style="font-size:13px;font-weight:700;color:#16A34A">{{ item.final }}</span>
+        {% else %}<span style="font-size:12px;color:#CBD5E1">0</span>{% endif %}
+      </td>
+      <td style="padding:9px 14px;text-align:right">
+        {% if item.filtered > 0 %}<span style="font-size:12px;font-weight:600;color:#D97706">{{ item.filtered }}</span>
+        {% else %}<span style="font-size:12px;color:#CBD5E1">0</span>{% endif %}
+      </td>
+      <td style="padding:9px 14px;text-align:center">
+        {% set cov_pct = (item.topics_covered / 12 * 100)|int %}
+        <div style="display:flex;align-items:center;gap:6px;justify-content:center">
+          <div style="width:60px;height:6px;background:#E2E8F0;border-radius:99px;overflow:hidden">
+            <div style="height:100%;width:{{ cov_pct }}%;background:{% if cov_pct >= 75 %}#16A34A{% elif cov_pct >= 40 %}#D97706{% else %}#BE185D{% endif %};border-radius:99px"></div>
+          </div>
+          <span style="font-size:11px;font-weight:600;color:#334155">{{ item.topics_covered }}/12</span>
+        </div>
       </td>
       <td style="padding:9px 14px;text-align:center">
         {% if item.final > 0 %}
-        <span style="font-size:10px;background:#F0FDF4;color:#14532D;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid #86EFAC">News found</span>
+        <span style="font-size:10px;background:#F0FDF4;color:#14532D;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid #86EFAC">News Found</span>
         {% elif item.raw > 0 %}
-        <span style="font-size:10px;background:#FFFBEB;color:#92400E;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid #FCD34D">Filtered out</span>
+        <span style="font-size:10px;background:#FFFBEB;color:#92400E;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid #FCD34D">Filtered Out</span>
         {% else %}
-        <span style="font-size:10px;background:#FFF1F2;color:#BE123C;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid #FECDD3">No news</span>
+        <span style="font-size:10px;background:#FFF1F2;color:#BE123C;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid #FECDD3">No News</span>
         {% endif %}
       </td>
     </tr>
@@ -81,14 +232,14 @@
 </div>
 {% endif %}
 
-<!-- No news at all -->
-<div style="background:#fff;border-radius:10px;border:0.5px solid #D4DAE8;overflow:hidden;margin-bottom:12px;box-shadow:0 2px 6px rgba(0,0,0,0.05)">
+<!-- ── No news entities ──────────────────────────────────────────────────────── -->
+{% if gap_report.no_news_at_all %}
+<div style="background:#fff;border-radius:10px;border:0.5px solid #D4DAE8;overflow:hidden;margin-bottom:10px;box-shadow:0 2px 6px rgba(0,0,0,0.05)">
   <div style="padding:10px 14px;display:flex;align-items:center;gap:8px;border-bottom:0.5px solid #D4DAE8;background:linear-gradient(90deg,#FFFBEB,#FFFFF8)">
     <div style="width:3px;height:14px;border-radius:99px;background:#D97706;flex-shrink:0"></div>
-    <span style="font-size:13px;font-weight:700;color:#92400E">Entities with no news this period</span>
+    <span style="font-size:13px;font-weight:700;color:#92400E">Entities with No News This Period</span>
     <span style="font-size:10px;color:#94A3B8;background:#F1F5F9;padding:2px 7px;border-radius:99px;border:0.5px solid #D4DAE8">{{ gap_report.no_news_at_all|length }}</span>
   </div>
-  {% if gap_report.no_news_at_all %}
   <table style="width:100%;border-collapse:collapse">
     <thead><tr>
       <th style="text-align:left;padding:7px 14px;font-size:10px;font-weight:700;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;border-bottom:0.5px solid #F1F5F9">Entity</th>
@@ -103,27 +254,28 @@
     {% endfor %}
     </tbody>
   </table>
-  {% else %}
-  <div style="padding:16px 14px;font-size:12px;color:#16A34A;font-style:italic">
-    <i class="ti ti-circle-check" style="font-size:14px;vertical-align:-2px;margin-right:6px"></i>All entities have at least one article this period.
-  </div>
-  {% endif %}
 </div>
+{% else %}
+<div style="background:#F0FDF4;border:0.5px solid #86EFAC;border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:12px;color:#16A34A">
+  <i class="ti ti-circle-check" style="font-size:14px;vertical-align:-2px;margin-right:6px"></i>All entities have at least one article this period.
+</div>
+{% endif %}
 
-<!-- Topic gaps -->
+<!-- ── Topic gaps ─────────────────────────────────────────────────────────────── -->
+{% if gap_report.topic_gaps %}
 <div style="background:#fff;border-radius:10px;border:0.5px solid #D4DAE8;overflow:hidden;box-shadow:0 2px 6px rgba(0,0,0,0.05)">
   <div style="padding:10px 14px;display:flex;align-items:center;gap:8px;border-bottom:0.5px solid #D4DAE8;background:linear-gradient(90deg,#FFFBEB,#FFFFF8)">
     <div style="width:3px;height:14px;border-radius:99px;background:#D97706;flex-shrink:0"></div>
-    <span style="font-size:13px;font-weight:700;color:#92400E">Topic-level gaps</span>
-    <span style="font-size:10px;color:#94A3B8;background:#F1F5F9;padding:2px 7px;border-radius:99px;border:0.5px solid #D4DAE8">{{ gap_report.topic_gaps|length }} entities</span>
+    <span style="font-size:13px;font-weight:700;color:#92400E">Topic-Level Gaps</span>
+    <span style="font-size:10px;color:#94A3B8;background:#F1F5F9;padding:2px 7px;border-radius:99px;border:0.5px solid #D4DAE8">{{ gap_report.topic_gaps|length }} entities with gaps</span>
   </div>
-  {% if gap_report.topic_gaps %}
   <div style="padding:12px 14px;display:flex;flex-direction:column;gap:10px">
     {% for name, info in gap_report.topic_gaps.items() %}
     <div style="border:0.5px solid #E2E8F0;border-radius:8px;padding:10px 12px">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
         <span style="font-size:13px;font-weight:700;color:#0F172A">{{ name }}</span>
         {{ entity_type_badge(info.entity_type) }}
+        <span style="font-size:10px;color:#94A3B8;margin-left:auto">{{ info.missing_topics|length }} topic{{ 's' if info.missing_topics|length != 1 else '' }} missing</span>
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:4px">
         {% for topic in info.missing_topics %}
@@ -133,11 +285,60 @@
     </div>
     {% endfor %}
   </div>
-  {% else %}
-  <div style="padding:16px 14px;font-size:12px;color:#16A34A;font-style:italic">
-    <i class="ti ti-circle-check" style="font-size:14px;vertical-align:-2px;margin-right:6px"></i>All entities have news across all topic categories.
-  </div>
-  {% endif %}
+</div>
+{% else %}
+<div style="background:#F0FDF4;border:0.5px solid #86EFAC;border-radius:8px;padding:10px 14px;font-size:12px;color:#16A34A">
+  <i class="ti ti-circle-check" style="font-size:14px;vertical-align:-2px;margin-right:6px"></i>All entities have news across all topic categories.
 </div>
 {% endif %}
+
+{% endif %}{# end if gap_report #}
+{% endif %}{# end if all_reports #}
+
+<script>
+(function() {
+  var activeType = 'all', activeStatus = 'all';
+
+  function applyFilters() {
+    var rows = document.querySelectorAll('#gap-entity-table tbody tr');
+    var visible = 0;
+    rows.forEach(function(r) {
+      var type   = r.getAttribute('data-type') || '';
+      var status = r.getAttribute('data-status') || '';
+      var show = (activeType === 'all' || type === activeType) &&
+                 (activeStatus === 'all' || status === activeStatus);
+      r.style.display = show ? '' : 'none';
+      if (show) visible++;
+    });
+    var cnt = document.getElementById('gap-visible-count');
+    if (cnt) cnt.textContent = visible + ' entit' + (visible === 1 ? 'y' : 'ies');
+  }
+
+  function setActive(btns, value) {
+    btns.forEach(function(b) {
+      var isActive = b.getAttribute('data-gap-' + (btns[0].getAttribute('data-gap-type') !== null ? 'type' : 'status')) === value;
+      b.style.background    = isActive ? '#EFF6FF' : '#fff';
+      b.style.borderColor   = isActive ? '#2563EB' : '#D4DAE8';
+      b.style.color         = isActive ? '#1E40AF' : '#64748B';
+    });
+  }
+
+  window.filterGapTable = function(dimension, value) {
+    if (dimension === 'type') {
+      activeType = value;
+      setActive(document.querySelectorAll('[data-gap-type]'), value);
+    } else {
+      activeStatus = value;
+      setActive(document.querySelectorAll('[data-gap-status]'), value);
+    }
+    applyFilters();
+  };
+
+  // Initialise button states
+  var typeBtns   = document.querySelectorAll('[data-gap-type]');
+  var statusBtns = document.querySelectorAll('[data-gap-status]');
+  if (typeBtns.length)   setActive(typeBtns,   'all');
+  if (statusBtns.length) setActive(statusBtns, 'all');
+})();
+</script>
 {% endblock %}

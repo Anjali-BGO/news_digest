@@ -112,12 +112,11 @@
 </div>
 {% endif %}
 
-<!-- Tabs — counts reflect only entities that have articles for the selected period -->
-<div style="display:flex;gap:4px;margin-bottom:14px;border-bottom:1px solid #D4DAE8;padding-bottom:0">
+<!-- Tabs — Clients and Prospects only; Industries has its own page -->
+<div style="display:flex;align-items:center;gap:4px;margin-bottom:14px;border-bottom:1px solid #D4DAE8;padding-bottom:0">
   {% for tab_id, label, items_list, color, light, mid in [
-    ("client",   "Clients",    clients,    "#1E40AF", "#EFF6FF", "#BFDBFE"),
-    ("prospect", "Prospects",  prospects,  "#0F766E", "#E8FAF8", "#99F6E4"),
-    ("industry", "Industries", industries, "#5B21B6", "#F5F3FF", "#C4B5FD")
+    ("client",   "Clients",   clients,   "#1E40AF", "#EFF6FF", "#BFDBFE"),
+    ("prospect", "Prospects", prospects, "#0F766E", "#E8FAF8", "#99F6E4")
   ] %}
   <a href="/digest?tab={{ tab_id }}{% if selected_period %}&period={{ selected_period | urlencode }}{% endif %}"
     style="padding:8px 16px;font-size:13px;font-weight:600;border-radius:7px 7px 0 0;text-decoration:none;margin-bottom:-1px;border:1px solid transparent;
@@ -129,14 +128,19 @@
     {{ label }} <span style="font-size:11px;font-weight:400;margin-left:4px;opacity:0.7">({{ items_list|length }})</span>
   </a>
   {% endfor %}
+  <a href="/industry" style="padding:8px 16px;font-size:13px;font-weight:600;border-radius:7px 7px 0 0;text-decoration:none;margin-bottom:-1px;border:1px solid transparent;color:#94A3B8;margin-left:auto;display:flex;align-items:center;gap:5px"
+    title="View Industry News on its dedicated page">
+    <i class="ti ti-building-community" style="font-size:13px"></i>Industry News
+    <i class="ti ti-arrow-right" style="font-size:11px"></i>
+  </a>
 </div>
 
-{% set active_list = clients if active_tab == 'client' else (prospects if active_tab == 'prospect' else industries) %}
-{% set tab_color   = "#1E40AF" if active_tab == 'client' else ("#0F766E" if active_tab == 'prospect' else "#5B21B6") %}
-{% set tab_light   = "#EFF6FF" if active_tab == 'client' else ("#E8FAF8" if active_tab == 'prospect' else "#F5F3FF") %}
-{% set tab_mid     = "#BFDBFE" if active_tab == 'client' else ("#99F6E4" if active_tab == 'prospect' else "#C4B5FD") %}
-{% set tab_acc     = "#2563EB" if active_tab == 'client' else ("#0D9488" if active_tab == 'prospect' else "#7C3AED") %}
-{% set tab_total   = total_clients if active_tab == 'client' else (total_prospects if active_tab == 'prospect' else total_industries) %}
+{% set active_list = clients if active_tab == 'client' else prospects %}
+{% set tab_color   = "#1E40AF" if active_tab == 'client' else "#0F766E" %}
+{% set tab_light   = "#EFF6FF" if active_tab == 'client' else "#E8FAF8" %}
+{% set tab_mid     = "#BFDBFE" if active_tab == 'client' else "#99F6E4" %}
+{% set tab_acc     = "#2563EB" if active_tab == 'client' else "#0D9488" %}
+{% set tab_total   = total_clients if active_tab == 'client' else total_prospects %}
 
 {% if active_list %}
   {% for item in active_list %}
@@ -147,7 +151,7 @@
           <div style="width:3px;height:14px;border-radius:99px;background:{{ tab_acc }};flex-shrink:0"></div>
           <span style="font-size:14px;font-weight:700;color:{{ tab_color }}">{{ item.entity.name }}</span>
           <span style="font-size:11px;color:#94A3B8">{{ item.news|length }} article{{ 's' if item.news|length != 1 }}</span>
-          {% if active_tab != 'industry' and item.entity.website %}
+          {% if item.entity.website %}
           <a href="{{ item.entity.website }}" target="_blank" rel="noopener"
             style="font-size:10px;color:{{ tab_color }};opacity:0.6;text-decoration:none;
               display:inline-flex;align-items:center;gap:3px;border:0.5px solid {{ tab_mid }};
@@ -158,19 +162,11 @@
           {% endif %}
         </div>
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-          {% if active_tab == 'industry' and item.entity.industry_type %}
-          <span style="font-size:10px;background:#EDE9FE;color:#5B21B6;border:0.5px solid #C4B5FD;padding:2px 8px;border-radius:99px;font-weight:700">{{ item.entity.industry_type }}</span>
-          {% endif %}
           {% for t in item.entity.topics %}
           <span style="font-size:10px;background:{{ tab_light }};color:{{ tab_color }};border:0.5px solid {{ tab_mid }};padding:2px 7px;border-radius:99px;font-weight:600">{{ t }}</span>
           {% endfor %}
         </div>
       </div>
-      {% if active_tab == 'industry' and item.entity.news_scope %}
-      <div style="font-size:11px;color:#64748B;margin-top:5px;padding-left:11px;line-height:1.4">
-        <i class="ti ti-notes" style="font-size:10px;vertical-align:-1px;margin-right:3px;color:#94A3B8"></i>{{ item.entity.news_scope }}
-      </div>
-      {% endif %}
     </div>
 
     <div>
@@ -179,7 +175,7 @@
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:4px">
           <a href="{{ n.url }}" target="_blank" rel="noopener"
             style="font-size:13px;font-weight:600;text-decoration:none;line-height:1.4;flex:1;
-              color:{% if n.url_status == 'invalid' %}#94A3B8{% else %}#2563EB{% endif %}">
+              color:{% if n.url_status in ('invalid', 'archive') %}#94A3B8{% else %}#2563EB{% endif %}">
             {{ n.title }}
           </a>
           <span style="font-size:11px;color:#94A3B8;white-space:nowrap;flex-shrink:0">{{ "Date N/A" if not n.published_date or n.published_date == "NA" else n.published_date }}</span>
@@ -201,7 +197,7 @@
           <span style="font-size:11px;color:#64748B">{{ n.source | source_link | safe }}</span>
           {# Fetch API badge #}
           {% if n.fetch_source %}
-          {% set api_labels = {"tavily": "Tavily", "serpapi": "Google News", "newsdata": "NewsData.io", "newsapi": "NewsAPI.org", "newsai": "NewsAPI.ai"} %}
+          {% set api_labels = {"tavily": "Tavily", "serpapi": "Google News", "newsdata_io": "NewsData.io", "newsapi_ai": "NewsAPI.ai"} %}
           <span style="font-size:10px;background:#F1F5F9;color:#64748B;border:0.5px solid #CBD5E1;padding:2px 7px;border-radius:99px;font-weight:500">{{ api_labels.get(n.fetch_source, n.fetch_source) }}</span>
           {% endif %}
           {# Paywall warning #}
@@ -213,6 +209,8 @@
           <span style="font-size:10px;background:#FEE2E2;color:#B91C1C;border:1.5px solid #DC2626;padding:3px 9px;border-radius:99px;font-weight:600">⚠ Link broken</span>
           {% elif n.url_status == 'unknown' %}
           <span style="font-size:10px;background:#FEF3C7;color:#92400E;border:1.5px solid #D97706;padding:3px 9px;border-radius:99px;font-weight:600">⚠ Link unverified</span>
+          {% elif n.url_status == 'archive' %}
+          <span style="font-size:10px;background:#F1F5F9;color:#475569;border:1.5px solid #94A3B8;padding:3px 9px;border-radius:99px;font-weight:600">⚠ Archived copy</span>
           {% endif %}
         </div>
       </div>

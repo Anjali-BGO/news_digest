@@ -6,7 +6,11 @@ audit.json
 gap_report.json
 run_history.json
 error_log.json
+industry_all_records.json
+industry_accepted.json
+industry_rejected.json
 *.xlsx
 __pycache__/
 *.pyc
 pipeline_snapshots/
+raw_news/

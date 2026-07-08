@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "macros.html" import empty_state %}
+{% from "macros.html" import empty_state, entity_type_badge %}
 {% block title %}Audit Log — News Digest{% endblock %}
 {% block page_title %}Audit Log{% endblock %}
 
@@ -9,54 +9,226 @@
 {% else %}
 <span style="font-size:11px;color:#94A3B8">{{ total_count }} total entries</span>
 {% endif %}
+<a href="/export/audit-report" style="display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:7px;background:#475569;color:#fff;font-size:11px;font-weight:600;text-decoration:none">
+  <i class="ti ti-download" style="font-size:12px"></i> Download Audit
+</a>
+<a href="/export/validation-report" style="display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:7px;background:#2563EB;color:#fff;font-size:11px;font-weight:600;text-decoration:none">
+  <i class="ti ti-shield-check" style="font-size:12px"></i> Validation Report
+</a>
 {% endblock %}
 
 {% block content %}
+
+<!-- Entity type tabs -->
+<div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;align-items:center">
+  {% set tabs = [('all','All',type_counts.all),('client','Clients',type_counts.client),('prospect','Prospects',type_counts.prospect),('industry','Industries',type_counts.industry)] %}
+  {% for key, label, count in tabs %}
+  {% set is_active = active_tab == key %}
+  <a href="/audit?tab={{ key }}" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;text-decoration:none;border:0.5px solid {{ '#2563EB' if is_active else '#D4DAE8' }};background:{{ '#EFF6FF' if is_active else '#fff' }};color:{{ '#1E40AF' if is_active else '#64748B' }}">
+    {{ label }}
+    <span style="font-size:10px;background:{{ '#BFDBFE' if is_active else '#F1F5F9' }};color:{{ '#1E40AF' if is_active else '#94A3B8' }};padding:1px 7px;border-radius:99px">{{ count }}</span>
+  </a>
+  {% endfor %}
+</div>
+
+<!-- Validation accuracy explanation + recheck action -->
+<div style="background:#EFF6FF;border:0.5px solid #BFDBFE;border-radius:8px;padding:10px 14px;margin-bottom:10px;display:flex;align-items:flex-start;gap:10px">
+  <i class="ti ti-info-circle" style="font-size:15px;color:#2563EB;flex-shrink:0;margin-top:1px"></i>
+  <div style="flex:1;font-size:11px;color:#1E40AF;line-height:1.6">
+    <strong>Validation Accuracy</strong> = Accepted ÷ (Raw − Duplicates) × 100 — measures what % of unique articles passed the 8-point validation check.
+    Soft-tagged articles (paywall, limited preview) pass through and count as Accepted.
+    <strong>Hyperlink failures</strong> are logged as <em>url_invalid</em> but articles are still saved.
+    Use <strong>Re-validate URLs</strong> from the Digest page to recheck hyperlink status without re-fetching.
+  </div>
+</div>
+
 {% if entries %}
+<!-- JS filter bar -->
+<div style="background:#fff;border-radius:10px;border:0.5px solid #D4DAE8;padding:10px 14px;margin-bottom:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;box-shadow:0 1px 4px rgba(0,0,0,0.04)">
+  <span style="font-size:11px;font-weight:600;color:#64748B;flex-shrink:0">Filter:</span>
+
+  <!-- Action -->
+  <select id="filter-action" onchange="applyAuditFilters()" style="padding:5px 9px;border-radius:6px;border:0.5px solid #D4DAE8;font-size:11px;font-family:var(--f);color:#334155;background:#fff">
+    <option value="all">All Actions</option>
+    <option value="accepted">Accepted</option>
+    <option value="duplicate_removed">Duplicate</option>
+    <option value="validation_rejected">Validation Rejected</option>
+    <option value="url_invalid">URL Invalid</option>
+    <option value="industry_validated">Industry: Validated</option>
+    <option value="industry_non_validated">Industry: Non Validated</option>
+    <option value="industry_review">Industry: Review</option>
+  </select>
+
+  <!-- API source -->
+  {% if api_sources %}
+  {% set api_labels = {"tavily": "Tavily", "serpapi": "SerpAPI", "newsdata_io": "NewsData.io", "newsapi_ai": "NewsAPI.ai"} %}
+  <select id="filter-api" onchange="applyAuditFilters()" style="padding:5px 9px;border-radius:6px;border:0.5px solid #D4DAE8;font-size:11px;font-family:var(--f);color:#334155;background:#fff">
+    <option value="all">All APIs</option>
+    {% for src in api_sources %}
+    <option value="{{ src }}">{{ api_labels.get(src, src) }}</option>
+    {% endfor %}
+  </select>
+  {% endif %}
+
+  <!-- Run date -->
+  {% if run_dates %}
+  <select id="filter-date" onchange="applyAuditFilters()" style="padding:5px 9px;border-radius:6px;border:0.5px solid #D4DAE8;font-size:11px;font-family:var(--f);color:#334155;background:#fff">
+    <option value="all">All Dates</option>
+    {% for d in run_dates %}
+    <option value="{{ d }}">{{ d }}</option>
+    {% endfor %}
+  </select>
+  {% endif %}
+
+  <!-- Std reason -->
+  <select id="filter-reason" onchange="applyAuditFilters()" style="padding:5px 9px;border-radius:6px;border:0.5px solid #D4DAE8;font-size:11px;font-family:var(--f);color:#334155;background:#fff">
+    <option value="all">All Rejection Reasons</option>
+    <option value="Duplicate Article">Duplicate Article</option>
+    <option value="Time Period Mismatch">Time Period Mismatch</option>
+    <option value="Date Validation Failure">Date Validation Failure</option>
+    <option value="Non-English Content">Non-English Content</option>
+    <option value="Source Validation Failure">Source Validation Failure</option>
+    <option value="Entity Name Mismatch">Entity Name Mismatch</option>
+    <option value="Missing/Invalid Title">Missing/Invalid Title</option>
+    <option value="Hyperlink Not Working">Hyperlink Not Working</option>
+    <option value="Validation Failure">Other Validation Failure</option>
+  </select>
+
+  <button onclick="resetAuditFilters()" style="padding:5px 12px;border-radius:6px;border:0.5px solid #D4DAE8;background:#F8FAFC;font-size:11px;font-weight:600;color:#64748B;cursor:pointer;font-family:var(--f)">Reset</button>
+  <span style="margin-left:auto;font-size:11px;color:#94A3B8" id="audit-count">{{ entries|length }} entries</span>
+</div>
+
 <div style="background:#fff;border-radius:10px;border:0.5px solid #D4DAE8;overflow:hidden;box-shadow:0 2px 6px rgba(0,0,0,0.05)">
   <div style="overflow-x:auto">
-    <table style="width:100%;border-collapse:collapse;font-size:12px">
+    <table style="width:100%;border-collapse:collapse;font-size:12px" id="audit-table">
       <thead>
         <tr style="background:#F8FAFC;border-bottom:0.5px solid #D4DAE8">
           <th style="text-align:left;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase">Date</th>
+          <th style="text-align:left;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase">Period</th>
           <th style="text-align:left;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase">Entity</th>
-          <th style="text-align:left;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase">Action</th>
+          <th style="text-align:left;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase">Type</th>
+          <th style="text-align:left;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase">Status</th>
+          <th style="text-align:left;padding:9px 14px;font-weight:700;font-size:10px;color:#2563EB;letter-spacing:0.06em;text-transform:uppercase">Std. Reason</th>
+          <th style="text-align:left;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase">API</th>
           <th style="text-align:left;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase">Article Title</th>
-          <th style="text-align:left;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase">Reason</th>
-          <th style="text-align:left;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase">Source</th>
+          <th style="text-align:left;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase">Reason Detail</th>
+          <th style="text-align:left;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase">URL</th>
         </tr>
       </thead>
-      <tbody>
-      {% for e in entries|reverse %}
-      <tr style="border-bottom:0.5px solid #F8FAFC" onmouseover="this.style.background='#F9FAFB'" onmouseout="this.style.background=''">
+      <tbody id="audit-tbody">
+      {% for e in entries %}
+      {% set std_reason = standardize_reason(e.action, e.reason) %}
+      <tr data-action="{{ e.action }}"
+          data-api="{{ e.fetch_source or '' }}"
+          data-date="{{ e.run_date }}"
+          data-std="{{ std_reason }}"
+          style="border-bottom:0.5px solid #F8FAFC" onmouseover="this.style.background='#F9FAFB'" onmouseout="this.style.background=''">
+
         <td style="padding:9px 14px;color:#94A3B8;white-space:nowrap;font-size:11px">{{ e.run_date }}</td>
+
+        <td style="padding:9px 14px;white-space:nowrap;font-size:11px">
+          {% if e.window_from and e.window_to %}
+          <span style="color:#1E40AF;font-weight:600">{{ e.window_from }}</span>
+          <span style="color:#94A3B8;margin:0 3px">→</span>
+          <span style="color:#1E40AF;font-weight:600">{{ e.window_to }}</span>
+          {% else %}<span style="color:#CBD5E1">—</span>{% endif %}
+        </td>
+
         <td style="padding:9px 14px;font-weight:600;color:#0F172A">{{ e.entity_name }}</td>
+
+        <td style="padding:9px 14px">{{ entity_type_badge(e.entity_type) if e.entity_type else '' }}</td>
+
+        <!-- Status badge -->
         <td style="padding:9px 14px">
-          {% if e.action == 'duplicate_removed' %}
-          <span style="font-size:10px;background:#EFF6FF;color:#1E40AF;padding:2px 8px;border-radius:99px;font-weight:600">Duplicate</span>
+          {% if e.action == 'accepted' %}
+          <span style="font-size:10px;background:#F0FDF4;color:#14532D;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid #86EFAC">Accepted</span>
+          {% elif e.action == 'duplicate_removed' %}
+          <span style="font-size:10px;background:#EFF6FF;color:#1E40AF;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid #BFDBFE">Duplicate</span>
           {% elif e.action == 'validation_rejected' %}
-          <span style="font-size:10px;background:#FFF0F6;color:#BE185D;padding:2px 8px;border-radius:99px;font-weight:600">Rejected</span>
+          <span style="font-size:10px;background:#FFF0F6;color:#BE185D;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid #FBCFE8">Rejected</span>
           {% elif e.action == 'url_invalid' %}
           <span style="font-size:10px;background:#F0FDFA;color:#0F766E;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid #99F6E4">URL Invalid</span>
-          {% elif e.action == 'accepted' %}
-          <span style="font-size:10px;background:#F0FDF4;color:#14532D;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid #86EFAC">Accepted</span>
+          {% elif e.action == 'industry_validated' %}
+          <span style="font-size:10px;background:#F0FDF4;color:#15803D;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid #86EFAC">Industry: Validated</span>
+          {% elif e.action == 'industry_non_validated' %}
+          <span style="font-size:10px;background:#FEE2E2;color:#B91C1C;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid #FECACA">Industry: Non Validated</span>
+          {% elif e.action == 'industry_review' %}
+          <span style="font-size:10px;background:#FFFBEB;color:#92400E;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid #FCD34D">Industry: Review</span>
           {% else %}
           <span style="font-size:10px;background:#F1F5F9;color:#64748B;padding:2px 8px;border-radius:99px;font-weight:600">{{ e.action }}</span>
           {% endif %}
         </td>
-        <td style="padding:9px 14px;color:#334155;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ e.article_title }}</td>
-        <td style="padding:9px 14px;color:#475569;max-width:200px;font-size:11px">{{ e.reason }}</td>
+
+        <!-- Standardized reason badge (only for non-accepted) -->
+        <td style="padding:9px 14px;white-space:nowrap">
+          {% if e.action != 'accepted' %}
+          <span style="font-size:10px;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid rgba(0,0,0,0.08);{{ reason_badge_style(std_reason) }}">{{ std_reason }}</span>
+          {% else %}
+          <span style="color:#CBD5E1;font-size:11px">—</span>
+          {% endif %}
+        </td>
+
+        <!-- API source -->
+        <td style="padding:9px 14px;white-space:nowrap">
+          {% if e.fetch_source %}
+          {% set src = e.fetch_source %}
+          {% if src == 'tavily' %}<span style="font-size:10px;background:#EFF6FF;color:#1E40AF;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid #BFDBFE">Tavily</span>
+          {% elif src == 'serpapi' %}<span style="font-size:10px;background:#F0FDF4;color:#15803D;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid #86EFAC">SerpAPI</span>
+          {% elif src == 'newsdata_io' %}<span style="font-size:10px;background:#F5F3FF;color:#6D28D9;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid #C4B5FD">NewsData</span>
+          {% elif src == 'newsapi_ai' %}<span style="font-size:10px;background:#F0FDFA;color:#0F766E;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid #99F6E4">NewsAPI.ai</span>
+          {% else %}<span style="font-size:10px;background:#F1F5F9;color:#334155;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid #D4DAE8">{{ src }}</span>
+          {% endif %}
+          {% else %}<span style="color:#CBD5E1;font-size:11px">—</span>{% endif %}
+        </td>
+
+        <td style="padding:9px 14px;color:#334155;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ e.article_title }}">{{ e.article_title }}</td>
+
+        <td style="padding:9px 14px;color:#475569;max-width:180px;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ e.reason }}">{{ e.reason }}</td>
+
         <td style="padding:9px 14px">
           {% if e.source_url %}
           <a href="{{ e.source_url }}" target="_blank" style="color:#2563EB;font-size:11px;text-decoration:none;font-weight:600">Link →</a>
           {% else %}—{% endif %}
         </td>
+
       </tr>
       {% endfor %}
       </tbody>
     </table>
   </div>
 </div>
+
+<script>
+function applyAuditFilters() {
+  var actionVal = document.getElementById('filter-action').value;
+  var apiVal    = (document.getElementById('filter-api')    || {value:'all'}).value;
+  var dateVal   = (document.getElementById('filter-date')   || {value:'all'}).value;
+  var reasonVal = document.getElementById('filter-reason').value;
+
+  var rows    = document.querySelectorAll('#audit-tbody tr');
+  var visible = 0;
+  rows.forEach(function(r) {
+    var match =
+      (actionVal === 'all' || r.getAttribute('data-action') === actionVal) &&
+      (apiVal    === 'all' || r.getAttribute('data-api')    === apiVal)    &&
+      (dateVal   === 'all' || r.getAttribute('data-date')   === dateVal)   &&
+      (reasonVal === 'all' || r.getAttribute('data-std')    === reasonVal);
+    r.style.display = match ? '' : 'none';
+    if (match) visible++;
+  });
+  var cnt = document.getElementById('audit-count');
+  if (cnt) cnt.textContent = visible + ' entr' + (visible === 1 ? 'y' : 'ies');
+}
+
+function resetAuditFilters() {
+  ['filter-action','filter-api','filter-date','filter-reason'].forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.value = 'all';
+  });
+  applyAuditFilters();
+}
+</script>
+
 {% else %}
 {{ empty_state("clipboard-list", "No audit entries yet.", "Entries are created automatically when news is fetched.") }}
 {% endif %}

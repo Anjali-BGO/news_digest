@@ -101,6 +101,10 @@
         <i class="ti ti-layout-list"></i>Digest
         <span class="nav-dot" style="background:#0D9488"></span>
       </a>
+      <a href="/industry" class="nav-item {% if request.url.path == '/industry' %}active{% endif %}">
+        <i class="ti ti-building-community"></i>Industry News
+        <span class="nav-dot" style="background:#7C3AED"></span>
+      </a>
       <a href="/gaps" class="nav-item {% if request.url.path == '/gaps' %}active{% endif %}">
         <i class="ti ti-alert-triangle"></i>Gap Report
         <span class="nav-dot" style="background:#D97706"></span>
@@ -113,12 +117,21 @@
         <i class="ti ti-chart-bar"></i>Run History
         <span class="nav-dot" style="background:#16A34A"></span>
       </a>
-      <span class="nav-section">Actions</span>
-      <a href="/export/excel" class="nav-item" title="Exports all periods — use the Export button on the Digest page to export a specific period">
-        <i class="ti ti-file-spreadsheet"></i>Export Excel
+      <span class="nav-section">Downloads</span>
+      <a href="/export/excel" class="nav-item" title="Digest news for the current period">
+        <i class="ti ti-file-spreadsheet"></i>Digest News
       </a>
-      <a href="/export/excel-full" class="nav-item">
-        <i class="ti ti-table-export"></i>Full Analytics
+      <a href="/export/gap-report" class="nav-item" title="All gap report runs (Excel)">
+        <i class="ti ti-chart-bar"></i>Gap Report
+      </a>
+      <a href="/export/run-report" class="nav-item" title="Full run history (Excel)">
+        <i class="ti ti-table-export"></i>Run Report
+      </a>
+      <a href="/export/audit-report" class="nav-item" title="Audit log — accepted and rejected (Excel)">
+        <i class="ti ti-clipboard-list"></i>Audit Report
+      </a>
+      <a href="/export/validation-report" class="nav-item" title="Validation accuracy and rejection reasons (Excel)">
+        <i class="ti ti-shield-check"></i>Validation Report
       </a>
     </nav>
 
@@ -152,9 +165,24 @@
       </form>
     </div>
     {% elif job_status and job_status.last_run %}
-    <div class="job-banner done">
+    <div class="job-banner done" id="job-done-banner">
       <span><i class="ti ti-circle-check" style="font-size:13px;vertical-align:-2px;margin-right:6px"></i>{{ job_status.message }}</span>
+      <button onclick="dismissJobBanner()" title="Dismiss" style="background:none;border:none;font-size:14px;color:#14532D;cursor:pointer;padding:0 4px;line-height:1;font-family:var(--f);opacity:0.7" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.7">✕</button>
     </div>
+    <script>
+      (function () {
+        // Auto-dismiss done banner after 60 s
+        var banner = document.getElementById('job-done-banner');
+        if (banner) {
+          setTimeout(function () { if (banner) banner.style.display = 'none'; }, 60000);
+        }
+      })();
+      function dismissJobBanner() {
+        var banner = document.getElementById('job-done-banner');
+        if (banner) banner.style.display = 'none';
+        fetch('/clear-job-message', { method: 'POST' }).catch(function(){});
+      }
+    </script>
     {% endif %}
 
     <!-- Page content -->

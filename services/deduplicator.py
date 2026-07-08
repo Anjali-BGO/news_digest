@@ -87,7 +87,11 @@ def deduplicate(articles: List[dict]) -> Tuple[List[dict], List[dict]]:
                     keep_new = True
                 elif p_new == p_old:
                     # Tiebreak 1: earlier publish date
-                    if art.get("published_date", "") < existing.get("published_date", ""):
+                    # `or ""` guards against a literal None value (not just a
+                    # missing key) — normalizers can emit published_date=None
+                    # before the undated-article backfill runs, and str < None
+                    # raises TypeError.
+                    if (art.get("published_date") or "") < (existing.get("published_date") or ""):
                         keep_new = True
                     # Tiebreak 2: prefer Tavily (richer content)
                     elif art.get("fetch_source") == "tavily" \

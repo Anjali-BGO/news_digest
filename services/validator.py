@@ -37,7 +37,8 @@ def _extract_domain(url: str) -> str:
         return ""
     try:
         u = url if "://" in url else f"https://{url}"
-        return urlparse(u).netloc.lstrip("www.").lower()
+        netloc = urlparse(u).netloc.lower()
+        return netloc[4:] if netloc.startswith("www.") else netloc
     except Exception:
         return ""
 
@@ -49,7 +50,7 @@ def _is_removed(title: str, content: str) -> bool:
 def _has_limited_preview(content: str, title: str) -> bool:
     """
     Returns True when BOTH content AND title are very short — common for
-    SerpAPI/NewsAPI/NewsData snippets by design, not necessarily a paywall.
+    SerpAPI/NewsData snippets by design, not necessarily a paywall.
     Rejects only when both signals fire together to avoid silently dropping
     valid articles from snippet-only sources.
     """
@@ -129,7 +130,7 @@ def _is_relevant(title: str, content: str, url: str,
       names are always capitalised. A cap match in the content body is definitive.
 
     Phase 2 — title fallback (weak signal):
-      Short snippets from SerpAPI/NewsAPI (<400 chars) may omit the entity name
+      Short snippets from SerpAPI (<400 chars) may omit the entity name
       from the description even when the article is genuinely about them. In that
       case the title is used as a fallback. For long content (Tavily full articles)
       the title is NOT used as a fallback — if the entity does not appear capitalised
@@ -163,6 +164,7 @@ async def validate_articles(
     entity_name:    str = "",
     entity_website: str = "",
     entity_aliases: list = [],
+    entity_type:    str = "",
 ) -> Tuple[List[dict], List[dict]]:
     """
     8-point validation checklist. Designed to reject only what is clearly wrong;
@@ -173,7 +175,7 @@ async def validate_articles(
     Point 3  — Published date too far in future (> 1 day after window end)
     Point 4  — Limited content (content < 150 chars AND title < 60 chars)
                 → soft tag only; article is KEPT with a "Limited preview" note.
-                SerpAPI/NewsData/NewsAPI always return short snippets — hard-
+                SerpAPI/NewsData always return short snippets — hard-
                 rejecting on length alone would silently discard valid articles.
     Point 5  — Non-English article (only fires when language field is explicitly set)
     Point 6  — Blocked domain (social media / forums)
@@ -238,7 +240,7 @@ async def validate_articles(
                 continue
 
         # 4. Limited content preview — soft tag only, article is KEPT.
-        # SerpAPI returns 80–150 char snippets by design; NewsAPI/NewsData descriptions
+        # SerpAPI returns 80–150 char snippets by design; NewsData descriptions
         # are similarly short. Hard-rejecting on length alone silently drops valid articles.
         # We tag the article so the user can see it in the digest with a notice.
         if _has_limited_preview(content, title):
@@ -265,12 +267,13 @@ async def validate_articles(
             continue
 
         # 7. Entity relevance
-        # Runs for every entity that has a name. Checks that the entity name
-        # appears somewhere in the article — title or content. Without this,
-        # Tavily search drift produces articles about unrelated companies (e.g.
-        # a "Stripe" query returning LUCA MINING CORP financial results).
+        # Runs for company entities (client/prospect). Industry entities are
+        # meta-category labels ("Financial Services & Banking") that never
+        # appear verbatim in articles — skip the check; the Tavily query already
+        # ensures topic relevance. For companies, this catches search drift where
+        # Tavily returns unrelated articles (e.g. "Stripe" → LUCA MINING CORP).
         # Domain match (entity_website set) is an automatic pass.
-        if ent_lower and not _is_relevant(
+        if ent_lower and entity_type != "industry" and not _is_relevant(
             title, content, url, ent_lower, ent_domain,
             art.get("fetch_source", ""),
             entity_aliases,
@@ -287,11 +290,17 @@ async def validate_articles(
         # Hard-rejecting Reuters/Bloomberg/FT/WSJ silently removes high-value coverage;
         # tagging is always preferable to silent removal.
         if _is_metered_paywall(url):
+            # Combine with any note point 4 already set (e.g. "Limited content
+            # preview") instead of letting one soft-tag silently overwrite the
+            # other — Reuters/Bloomberg/FT/WSJ articles very commonly trigger both.
+            _paywall_msg = f"Article from {domain} may require a subscription — content preview may be limited."
+            _existing_note = art.get("paywall_note", "")
             art = {
                 **art,
                 "paywall_note": (
-                    art.get("paywall_note", "")
-                    or f"Article from {domain} may require a subscription — content preview may be limited."
+                    f"{_existing_note} {_paywall_msg}"
+                    if _existing_note and _existing_note != _paywall_msg
+                    else _paywall_msg
                 ),
             }
 

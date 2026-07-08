@@ -4,40 +4,117 @@
 {% block page_title %}Run History{% endblock %}
 
 {% block topbar_right %}
-<span style="font-size:11px;color:#94A3B8">{{ runs|length }} run{{ 's' if runs|length != 1 else '' }} recorded</span>
+<span style="font-size:11px;color:#94A3B8">{{ total_runs }} run{{ 's' if total_runs != 1 else '' }}</span>
+<a href="/export/run-report" style="display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:7px;background:#475569;color:#fff;font-size:11px;font-weight:600;text-decoration:none">
+  <i class="ti ti-download" style="font-size:12px"></i> Download Report
+</a>
 {% endblock %}
 
 {% block content %}
 {% if runs %}
+
+<!-- ── Overall stats bar ──────────────────────────────────────────────────────── -->
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:12px">
+
+  <!-- Total runs -->
+  <div style="background:#fff;border-radius:10px;border:0.5px solid #D4DAE8;padding:12px 14px;box-shadow:0 2px 5px rgba(0,0,0,0.04)">
+    <div style="font-size:10px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:4px">Total Runs</div>
+    <div style="font-size:22px;font-weight:800;color:#0F172A">{{ total_runs }}</div>
+  </div>
+
+  <!-- Total raw fetched -->
+  <div style="background:#fff;border-radius:10px;border:0.5px solid #D4DAE8;padding:12px 14px;box-shadow:0 2px 5px rgba(0,0,0,0.04)">
+    <div style="font-size:10px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:4px">Total Raw</div>
+    <div style="font-size:22px;font-weight:800;color:#334155">{{ "{:,}".format(total_raw) }}</div>
+  </div>
+
+  <!-- Total accepted -->
+  <div style="background:#F0FDF4;border-radius:10px;border:0.5px solid #86EFAC;padding:12px 14px;box-shadow:0 2px 5px rgba(0,0,0,0.04)">
+    <div style="font-size:10px;font-weight:700;color:#16A34A;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:4px">Accepted</div>
+    <div style="font-size:22px;font-weight:800;color:#14532D">{{ "{:,}".format(total_accepted) }}</div>
+    <div style="font-size:10px;color:#16A34A;margin-top:2px">{{ accept_rate }}% of raw</div>
+  </div>
+
+  <!-- Duplicates -->
+  <div style="background:#FFF0F6;border-radius:10px;border:0.5px solid #FBCFE8;padding:12px 14px;box-shadow:0 2px 5px rgba(0,0,0,0.04)">
+    <div style="font-size:10px;font-weight:700;color:#BE185D;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:4px">Duplicates</div>
+    <div style="font-size:22px;font-weight:800;color:#BE185D">{{ "{:,}".format(total_dupes) }}</div>
+  </div>
+
+  <!-- Rejected -->
+  <div style="background:#FFFBEB;border-radius:10px;border:0.5px solid #FCD34D;padding:12px 14px;box-shadow:0 2px 5px rgba(0,0,0,0.04)">
+    <div style="font-size:10px;font-weight:700;color:#D97706;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:4px">Rejected</div>
+    <div style="font-size:22px;font-weight:800;color:#92400E">{{ "{:,}".format(total_rejected) }}</div>
+  </div>
+
+  <!-- AI calls -->
+  <div style="background:#F5F3FF;border-radius:10px;border:0.5px solid #C4B5FD;padding:12px 14px;box-shadow:0 2px 5px rgba(0,0,0,0.04)">
+    <div style="font-size:10px;font-weight:700;color:#7C3AED;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:4px">AI Calls</div>
+    <div style="font-size:22px;font-weight:800;color:#5B21B6">{{ "{:,}".format(total_ai_calls) }}</div>
+    <div style="font-size:10px;color:#7C3AED;margin-top:2px">{{ "{:,}".format(total_tokens) }} tokens</div>
+  </div>
+
+</div>
+
+<!-- ── Validation accuracy explanation ───────────────────────────────────────── -->
+<div style="background:#EFF6FF;border:0.5px solid #BFDBFE;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:11px;color:#1E40AF;line-height:1.6">
+  <i class="ti ti-shield-check" style="font-size:13px;vertical-align:-2px;margin-right:5px"></i>
+  <strong>Validation Accuracy</strong> = Accepted ÷ (Raw − Duplicates) × 100 — % of unique articles that passed all 8 validation checks (date, language, domain, entity relevance, title etc.).
+  <strong>Acceptance Rate</strong> = Accepted ÷ Raw × 100 — overall throughput including deduplication.
+  Soft-tagged articles (paywall, limited preview) count as Accepted.
+  {% if api_usage %}
+  &nbsp;|&nbsp;<strong>API Usage across all runs:</strong>
+  {% for src, cnt in api_usage.items() %}{{ src|capitalize }}: {{ cnt }}{% if not loop.last %}, {% endif %}{% endfor %}.
+  {% endif %}
+</div>
+
+<!-- ── Run table ─────────────────────────────────────────────────────────────── -->
 <div style="background:#fff;border-radius:10px;border:0.5px solid #D4DAE8;overflow:hidden;box-shadow:0 2px 6px rgba(0,0,0,0.05)">
   <div style="overflow-x:auto">
     <table style="width:100%;border-collapse:collapse;font-size:12px">
       <thead>
         <tr style="background:#F8FAFC;border-bottom:0.5px solid #D4DAE8">
           <th style="text-align:left;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap">Started</th>
-          <th style="text-align:left;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap">Completed</th>
-          <th style="text-align:left;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap">Period</th>
+          <th style="text-align:left;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap">Report Period</th>
           <th style="text-align:left;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap">Status</th>
           <th style="text-align:left;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap">Scope</th>
-          <th style="text-align:right;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap">Articles</th>
-          <th style="text-align:right;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap">Dupes removed</th>
-          <th style="text-align:right;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap">Rejected</th>
+          <th style="text-align:left;padding:9px 14px;font-weight:700;font-size:10px;color:#2563EB;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap">APIs Used</th>
+          <th style="text-align:right;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap">Raw</th>
+          <th style="text-align:right;padding:9px 14px;font-weight:700;font-size:10px;color:#BE185D;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap">Dupes</th>
+          <th style="text-align:right;padding:9px 14px;font-weight:700;font-size:10px;color:#D97706;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap">Rejected</th>
+          <th style="text-align:right;padding:9px 14px;font-weight:700;font-size:10px;color:#16A34A;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap">Accepted</th>
+          <th style="text-align:right;padding:9px 14px;font-weight:700;font-size:10px;color:#16A34A;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap">Accept %</th>
+          <th style="text-align:right;padding:9px 14px;font-weight:700;font-size:10px;color:#2563EB;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap">Val. Acc %</th>
           <th style="text-align:right;padding:9px 14px;font-weight:700;font-size:10px;color:#7C3AED;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap">AI Calls</th>
-          <th style="text-align:right;padding:9px 14px;font-weight:700;font-size:10px;color:#7C3AED;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap">Retries</th>
           <th style="text-align:right;padding:9px 14px;font-weight:700;font-size:10px;color:#7C3AED;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap">Tokens</th>
           <th style="text-align:right;padding:9px 14px;font-weight:700;font-size:10px;color:#94A3B8;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap">Duration</th>
         </tr>
       </thead>
       <tbody>
       {% for r in runs %}
-      {% set mins = (r.duration_seconds // 60) %}
-      {% set secs = (r.duration_seconds % 60) %}
+      {% set mins = (r.duration_seconds // 60) if r.duration_seconds else 0 %}
+      {% set secs = (r.duration_seconds % 60) if r.duration_seconds else 0 %}
       <tr style="border-bottom:0.5px solid #F8FAFC" onmouseover="this.style.background='#F9FAFB'" onmouseout="this.style.background=''">
 
-        <td style="padding:9px 14px;color:#94A3B8;white-space:nowrap;font-size:11px">{{ r.started_at }}</td>
-        <td style="padding:9px 14px;color:#94A3B8;white-space:nowrap;font-size:11px">{{ r.completed_at }}</td>
-        <td style="padding:9px 14px;color:#475569;font-size:11px;white-space:nowrap">{{ r.window_label or "—" }}</td>
+        <!-- Started / completed -->
+        <td style="padding:9px 14px;white-space:nowrap">
+          <div style="color:#0F172A;font-size:11px;font-weight:600">{{ r.started_at }}</div>
+          <div style="color:#94A3B8;font-size:10px;margin-top:2px">→ {{ r.completed_at }}</div>
+        </td>
 
+        <!-- Report period -->
+        <td style="padding:9px 14px;white-space:nowrap">
+          {% if r.window_from and r.window_to %}
+          <div style="font-size:11px;font-weight:600;color:#1E40AF">{{ r.window_from }}</div>
+          <div style="font-size:10px;color:#94A3B8">→ {{ r.window_to }}</div>
+          {% elif r.window_label %}
+          <div style="font-size:11px;color:#475569">{{ r.window_label }}</div>
+          {% else %}
+          <span style="color:#CBD5E1">—</span>
+          {% endif %}
+        </td>
+
+        <!-- Status -->
         <td style="padding:9px 14px">
           {% if r.status == "completed" %}
           <span style="font-size:10px;background:#F0FDF4;color:#14532D;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid #86EFAC">
@@ -47,21 +124,18 @@
           <span style="font-size:10px;background:#FFFBEB;color:#92400E;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid #FCD34D">
             <i class="ti ti-x" style="font-size:10px;vertical-align:-1px"></i> Cancelled
           </span>
-          {% elif r.status == "failed" %}
-          <span style="font-size:10px;background:#FFF0F6;color:#BE185D;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid #FBCFE8">
-            <i class="ti ti-alert-triangle" style="font-size:10px;vertical-align:-1px"></i> Failed
-          </span>
           {% else %}
-          <span style="font-size:10px;background:#F1F5F9;color:#64748B;padding:2px 8px;border-radius:99px;font-weight:600">{{ r.status }}</span>
+          <span style="font-size:10px;background:#FFF0F6;color:#BE185D;padding:2px 8px;border-radius:99px;font-weight:600;border:0.5px solid #FBCFE8">{{ r.status }}</span>
           {% endif %}
           {% if r.exhausted_sources %}
           <div style="margin-top:4px;font-size:10px;color:#BE185D;font-weight:600">
             <i class="ti ti-alert-triangle" style="font-size:9px;vertical-align:-1px"></i>
-            Credits exhausted: {{ r.exhausted_sources | join(", ") }}
+            Exhausted: {{ r.exhausted_sources | join(", ") }}
           </div>
           {% endif %}
         </td>
 
+        <!-- Scope -->
         <td style="padding:9px 14px">
           {% if r.entity_name %}
           <span style="font-size:11px;font-weight:600;color:#0F172A">{{ r.entity_name }}</span>
@@ -70,53 +144,92 @@
           {% endif %}
         </td>
 
-        <td style="padding:9px 14px;text-align:right">
-          <span style="font-weight:700;color:#1E40AF;font-size:13px">{{ r.total_articles }}</span>
+        <!-- APIs used -->
+        <td style="padding:9px 14px">
+          {% if r.api_sources_used %}
+          <div style="display:flex;flex-wrap:wrap;gap:3px">
+            {% for src in r.api_sources_used %}
+            {% if src == 'tavily' %}
+            <span style="font-size:9px;background:#EFF6FF;color:#1E40AF;padding:1px 6px;border-radius:99px;font-weight:700;border:0.5px solid #BFDBFE">Tavily</span>
+            {% elif src == 'serpapi' %}
+            <span style="font-size:9px;background:#F0FDF4;color:#15803D;padding:1px 6px;border-radius:99px;font-weight:700;border:0.5px solid #86EFAC">SerpAPI</span>
+            {% elif src == 'newsdata_io' %}
+            <span style="font-size:9px;background:#F5F3FF;color:#6D28D9;padding:1px 6px;border-radius:99px;font-weight:700;border:0.5px solid #C4B5FD">NewsData</span>
+            {% elif src == 'newsapi_ai' %}
+            <span style="font-size:9px;background:#F0FDFA;color:#0F766E;padding:1px 6px;border-radius:99px;font-weight:700;border:0.5px solid #99F6E4">NewsAPI.ai</span>
+            {% else %}
+            <span style="font-size:9px;background:#F1F5F9;color:#475569;padding:1px 6px;border-radius:99px;font-weight:700;border:0.5px solid #D4DAE8">{{ src }}</span>
+            {% endif %}
+            {% endfor %}
+          </div>
+          {% else %}
+          <span style="color:#CBD5E1;font-size:11px">—</span>
+          {% endif %}
         </td>
 
+        <!-- Raw -->
+        <td style="padding:9px 14px;text-align:right">
+          {% if r._raw_calc %}
+          <span style="font-weight:600;color:#475569;font-size:13px">{{ r._raw_calc }}</span>
+          {% else %}<span style="color:#CBD5E1">0</span>{% endif %}
+        </td>
+
+        <!-- Dupes -->
         <td style="padding:9px 14px;text-align:right">
           {% if r.duplicates_removed %}
           <span style="color:#BE185D;font-weight:600">−{{ r.duplicates_removed }}</span>
-          {% else %}
-          <span style="color:#CBD5E1">0</span>
-          {% endif %}
+          {% else %}<span style="color:#CBD5E1">0</span>{% endif %}
         </td>
 
+        <!-- Rejected -->
         <td style="padding:9px 14px;text-align:right">
           {% if r.articles_rejected %}
           <span style="color:#D97706;font-weight:600">−{{ r.articles_rejected }}</span>
-          {% else %}
-          <span style="color:#CBD5E1">0</span>
-          {% endif %}
+          {% else %}<span style="color:#CBD5E1">0</span>{% endif %}
         </td>
 
+        <!-- Accepted -->
+        <td style="padding:9px 14px;text-align:right">
+          {% if r.total_articles %}
+          <span style="font-weight:700;color:#16A34A;font-size:13px">{{ r.total_articles }}</span>
+          {% else %}<span style="color:#CBD5E1">0</span>{% endif %}
+        </td>
+
+        <!-- Acceptance rate -->
+        <td style="padding:9px 14px;text-align:right">
+          {% if r._accept_rate is defined %}
+          <span style="font-weight:600;font-size:12px;color:{% if r._accept_rate >= 60 %}#16A34A{% elif r._accept_rate >= 30 %}#D97706{% else %}#BE185D{% endif %}">{{ r._accept_rate }}%</span>
+          {% else %}<span style="color:#CBD5E1">—</span>{% endif %}
+        </td>
+
+        <!-- Validation accuracy -->
+        <td style="padding:9px 14px;text-align:right" title="Accepted ÷ (Raw − Duplicates) × 100">
+          {% if r._accuracy is defined %}
+          <span style="font-weight:600;font-size:12px;color:{% if r._accuracy >= 75 %}#2563EB{% elif r._accuracy >= 50 %}#D97706{% else %}#BE185D{% endif %}">{{ r._accuracy }}%</span>
+          {% else %}<span style="color:#CBD5E1">—</span>{% endif %}
+        </td>
+
+        <!-- AI calls -->
         <td style="padding:9px 14px;text-align:right">
           {% if r.ai_calls %}
           <span style="font-weight:600;color:#5B21B6">{{ r.ai_calls }}</span>
-          {% else %}
-          <span style="color:#CBD5E1">—</span>
-          {% endif %}
-        </td>
-
-        <td style="padding:9px 14px;text-align:right">
           {% if r.ai_retries %}
-          <span style="font-size:10px;background:#F5F3FF;color:#5B21B6;border:0.5px solid #C4B5FD;padding:2px 7px;border-radius:99px;font-weight:600">{{ r.ai_retries }}</span>
-          {% else %}
-          <span style="color:#CBD5E1">0</span>
+          <div style="font-size:9px;color:#5B21B6;margin-top:1px">{{ r.ai_retries }} retries</div>
           {% endif %}
+          {% else %}<span style="color:#CBD5E1">—</span>{% endif %}
         </td>
 
+        <!-- Tokens -->
         <td style="padding:9px 14px;text-align:right;white-space:nowrap">
           {% set total_tokens = (r.prompt_tokens or 0) + (r.completion_tokens or 0) %}
           {% if total_tokens %}
           <span style="font-size:11px;color:#5B21B6;font-weight:600" title="{{ r.prompt_tokens or 0 }} prompt + {{ r.completion_tokens or 0 }} completion">
             {{ "{:,}".format(total_tokens) }}
           </span>
-          {% else %}
-          <span style="color:#CBD5E1">—</span>
-          {% endif %}
+          {% else %}<span style="color:#CBD5E1">—</span>{% endif %}
         </td>
 
+        <!-- Duration -->
         <td style="padding:9px 14px;text-align:right;color:#64748B;font-size:11px;white-space:nowrap">
           {% if mins > 0 %}{{ mins }}m {% endif %}{{ secs }}s
         </td>
@@ -127,6 +240,7 @@
     </table>
   </div>
 </div>
+
 {% else %}
 {{ empty_state("chart-bar", "No runs recorded yet.", "Run history is saved automatically after each pipeline run.") }}
 {% endif %}

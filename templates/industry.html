@@ -1,0 +1,402 @@
+{% extends "base.html" %}
+{% block title %}Industry News — News Digest{% endblock %}
+{% block page_title %}Industry News{% endblock %}
+
+{% block content %}
+<style>
+.toolbar-select {
+  font-size:11.5px; padding:5px 8px; border-radius:6px; font-weight:500;
+  font-family:inherit; cursor:pointer; background:#fff; border:1px solid #D4DAE8; color:#334155;
+  min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.toolbar-date {
+  font-size:11.5px; padding:4px 6px; border-radius:6px; font-weight:500;
+  font-family:inherit; cursor:pointer; background:#fff; border:1px solid #D4DAE8; color:#334155;
+  min-width:0;
+}
+.toolbar-group { display:flex; align-items:center; gap:4px; flex-shrink:0; }
+.toolbar-btn {
+  font-size:12px;font-weight:600;padding:7px 14px;border-radius:7px;color:#fff;border:none;
+  cursor:pointer;display:flex;align-items:center;gap:5px;white-space:nowrap;
+}
+</style>
+
+{# ── Filters section: industry, topic, source, period, date, range + clear — one tight row ── #}
+<div style="background:#fff;border:1px solid #D4DAE8;border-radius:10px;padding:10px 12px;margin-bottom:10px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;box-shadow:0 1px 3px rgba(0,0,0,0.04)">
+  <span style="font-size:10px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:0.04em;flex-shrink:0;margin-right:2px">Filters</span>
+
+  <select id="entityFilter" onchange="applyFilters()" class="toolbar-select"
+    style="background:#F5F3FF;border-color:#C4B5FD;color:#5B21B6;max-width:170px">
+    <option value="">All Industries ({{ entities|length }})</option>
+    {% for e in entities %}
+    <option value="{{ e.id }}" {% if e.id == selected_entity_id %}selected{% endif %}>{{ e.name }}</option>
+    {% endfor %}
+  </select>
+
+  <select id="topicFilter" onchange="applyFilters()" title="Filter by topic category" class="toolbar-select"
+    style="background:#FDF4FF;border-color:#F0ABFC;color:#86198F;max-width:180px">
+    <option value="">All Topics</option>
+    {% for t in all_topics %}
+    <option value="{{ t }}" {% if t == selected_topic %}selected{% endif %}>{{ t }}</option>
+    {% endfor %}
+  </select>
+
+  {% if all_sources %}
+  <select id="sourceFilter" onchange="applyFilters()" title="Filter by source" class="toolbar-select"
+    style="background:#EFF6FF;border-color:#BFDBFE;color:#1D4ED8;max-width:160px">
+    <option value="">All Sources</option>
+    {% for s in all_sources %}
+    <option value="{{ s }}" {% if s == selected_source %}selected{% endif %}>{{ s }}</option>
+    {% endfor %}
+  </select>
+  {% endif %}
+
+  <select id="statusFilter" onchange="applyFilters()" title="Filter by validation status" class="toolbar-select"
+    style="background:#F0FDF4;border-color:#BBF7D0;color:#15803D;max-width:170px">
+    <option value="">All Status</option>
+    <option value="Validated News"     {% if selected_status == 'Validated News' %}selected{% endif %}>Validated News</option>
+    <option value="Non Validated News" {% if selected_status == 'Non Validated News' %}selected{% endif %}>Non Validated News</option>
+    <option value="Review"             {% if selected_status == 'Review' %}selected{% endif %}>Review</option>
+    <option value="Pending"            {% if selected_status == 'Pending' %}selected{% endif %}>Pending AI Validation</option>
+  </select>
+
+  {% if all_periods %}
+  <select id="periodFilter" onchange="applyFilters()" class="toolbar-select" title="Run date (pipeline window)"
+    style="background:#E8FAF8;border-color:#99F6E4;color:#0F766E;max-width:190px">
+    <option value="all" {% if selected_period == 'all' %}selected{% endif %}>All Time</option>
+    {% for p in all_periods %}
+    <option value="{{ p }}" {% if p == selected_period %}selected{% endif %}>{{ p }}</option>
+    {% endfor %}
+  </select>
+  {% endif %}
+
+  <div class="toolbar-group">
+    <label style="font-size:10.5px;color:#94A3B8;flex-shrink:0">Date</label>
+    <input type="date" id="dateFilter" value="{{ selected_date }}" onchange="clearRangeAndApply()"
+      title="Filter to a single publish date" class="toolbar-date">
+  </div>
+
+  <div class="toolbar-group">
+    <label style="font-size:10.5px;color:#94A3B8;flex-shrink:0">Range</label>
+    <input type="date" id="dateFromFilter" value="{{ selected_date_from }}" onchange="clearSingleAndApply()"
+      title="Publish date range — from" class="toolbar-date">
+    <span style="font-size:10.5px;color:#94A3B8">–</span>
+    <input type="date" id="dateToFilter" value="{{ selected_date_to }}" onchange="clearSingleAndApply()"
+      title="Publish date range — to" class="toolbar-date">
+  </div>
+
+  {% if selected_entity_id or (selected_period and selected_period != 'all') or selected_date or selected_date_from or selected_date_to or selected_source or selected_topic or selected_status %}
+  <a href="/industry" style="font-size:11px;color:#64748B;text-decoration:none;display:flex;align-items:center;gap:3px;flex-shrink:0">
+    <i class="ti ti-x" style="font-size:11px"></i>Clear filters
+  </a>
+  {% endif %}
+</div>
+
+{# ── Actions section: pipeline / re-validate / export ── #}
+<div style="background:#fff;border:1px solid #D4DAE8;border-radius:10px;padding:12px 14px;margin-bottom:14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;box-shadow:0 1px 3px rgba(0,0,0,0.04)">
+  {# ── Run Industry Pipeline ── #}
+  <form method="post" action="/fetch-all-news" style="display:inline">
+    <input type="hidden" name="period_days" value="30">
+    <input type="hidden" name="entity_type_filter" value="industry">
+    <button type="submit" class="toolbar-btn" style="background:linear-gradient(90deg,#5B21B6,#7C3AED);box-shadow:0 2px 6px rgba(91,33,182,0.25)"
+      {% if job_status and job_status.running %}disabled title="A pipeline is already running"{% else %}title="Fetch fresh news for all industry entities — AI validation runs automatically right after"{% endif %}>
+      <i class="ti ti-player-play" style="font-size:13px"></i>Run Industry Pipeline
+    </button>
+  </form>
+
+  {# ── Re-validate (AI Validation now runs automatically after the pipeline; this button is only for re-running it on demand) ──
+     Confirm text is built in JS from data-* attributes (read via .dataset, not interpolated
+     into a JS string literal) so an apostrophe in an entity/period name — e.g. "Levi's" —
+     can never break the inline handler like it would with direct Jinja-into-JS interpolation. #}
+  <form method="post" action="/ai-validate-industry" style="display:inline"
+    data-period="{{ selected_period or 'all periods' }}"
+    data-entity-name="{% if selected_entity_id %}{{ (entities | selectattr('id', 'equalto', selected_entity_id) | first).name }}{% endif %}"
+    onsubmit="return confirmRevalidate(this)">
+    <input type="hidden" name="period"    value="{{ selected_period if selected_period and selected_period != 'all' else '' }}">
+    <input type="hidden" name="sector_id" value="{{ selected_entity_id or '' }}">
+    <button type="submit" class="toolbar-btn" style="background:linear-gradient(90deg,#4338CA,#6366F1);box-shadow:0 2px 6px rgba(67,56,202,0.25)"
+      {% if job_status and job_status.running %}disabled title="A pipeline is already running"{% else %}title="Re-run AI Validation on demand (it already runs automatically after the pipeline)"{% endif %}>
+      <i class="ti ti-refresh" style="font-size:13px"></i>Re-validate
+    </button>
+  </form>
+
+  {# ── Export ── #}
+  <a href="/export/excel{% if selected_period and selected_period != 'all' %}?period={{ selected_period | urlencode }}{% endif %}"
+    class="toolbar-btn" style="background:#0F172A;text-decoration:none;box-shadow:0 2px 6px rgba(0,0,0,0.15)"
+    title="Export full digest including industry sheet">
+    <i class="ti ti-download" style="font-size:13px"></i>Export Excel
+  </a>
+</div>
+
+<script>
+function confirmRevalidate(form) {
+  const period = form.dataset.period || 'all periods';
+  const entityName = form.dataset.entityName || '';
+  const msg = 'Re-run AI Validation for industry articles?\n\n' +
+    'AI Validation now runs automatically right after the Industry Pipeline fetches news, so you only need this if you want to re-check articles again — e.g. after a transient URL/date lookup failure, or after changing a sector\'s news scope.\n\n' +
+    'Checks each article URL, extracts publication date, then categorises + summarises using OpenAI.\n\n' +
+    'Filtered to: ' + period + (entityName ? ' / ' + entityName : '') + '.\n\n' +
+    'This may take several minutes.';
+  return confirm(msg);
+}
+
+function applyFilters() {
+  const eid      = document.getElementById('entityFilter').value;
+  const period   = document.getElementById('periodFilter') ? document.getElementById('periodFilter').value : 'all';
+  const date     = document.getElementById('dateFilter').value;
+  const dateFrom = document.getElementById('dateFromFilter').value;
+  const dateTo   = document.getElementById('dateToFilter').value;
+  const source   = document.getElementById('sourceFilter') ? document.getElementById('sourceFilter').value : '';
+  const topic    = document.getElementById('topicFilter').value;
+  const status   = document.getElementById('statusFilter').value;
+
+  const params = new URLSearchParams();
+  if (eid)      params.set('entity_id', eid);
+  if (period)   params.set('period', period);
+  if (date)     params.set('date', date);
+  if (dateFrom) params.set('date_from', dateFrom);
+  if (dateTo)   params.set('date_to', dateTo);
+  if (source)   params.set('source', source);
+  if (topic)    params.set('topic', topic);
+  if (status)   params.set('status', status);
+  window.location.href = '/industry?' + params.toString();
+}
+
+function clearRangeAndApply() {
+  document.getElementById('dateFromFilter').value = '';
+  document.getElementById('dateToFilter').value = '';
+  applyFilters();
+}
+
+function clearSingleAndApply() {
+  document.getElementById('dateFilter').value = '';
+  applyFilters();
+}
+
+</script>
+<style>
+.cat { display:inline-flex;align-items:center;font-size:10px;font-weight:600;padding:3px 9px;border-radius:99px;white-space:nowrap;line-height:1.4;letter-spacing:0.01em; }
+.cat-ar     { background:#0F766E; color:#fff }
+.cat-fin    { background:#1D4ED8; color:#fff }
+.cat-comp   { background:#C2410C; color:#fff }
+.cat-crisis { background:#B91C1C; color:#fff }
+.cat-cx     { background:#BE185D; color:#fff }
+.cat-dt     { background:#5B21B6; color:#fff }
+.cat-exp    { background:#15803D; color:#fff }
+.cat-infra  { background:#A16207; color:#fff }
+.cat-ma     { background:#3730A3; color:#fff }
+.cat-proj   { background:#0E7490; color:#fff }
+.cat-tech   { background:#7E22CE; color:#fff }
+.cat-reg    { background:#334155; color:#fff }
+.cat-gen    { background:#475569; color:#fff }
+.cat-ar-s     { background:#CCFBF1; color:#0F766E; border:1.5px solid #0F766E }
+.cat-fin-s    { background:#DBEAFE; color:#1D4ED8; border:1.5px solid #1D4ED8 }
+.cat-comp-s   { background:#FFEDD5; color:#C2410C; border:1.5px solid #C2410C }
+.cat-crisis-s { background:#FEE2E2; color:#B91C1C; border:1.5px solid #B91C1C }
+.cat-cx-s     { background:#FCE7F3; color:#BE185D; border:1.5px solid #BE185D }
+.cat-dt-s     { background:#EDE9FE; color:#5B21B6; border:1.5px solid #5B21B6 }
+.cat-exp-s    { background:#DCFCE7; color:#15803D; border:1.5px solid #15803D }
+.cat-infra-s  { background:#FEF3C7; color:#A16207; border:1.5px solid #A16207 }
+.cat-ma-s     { background:#E0E7FF; color:#3730A3; border:1.5px solid #3730A3 }
+.cat-proj-s   { background:#CFFAFE; color:#0E7490; border:1.5px solid #0E7490 }
+.cat-tech-s   { background:#F3E8FF; color:#7E22CE; border:1.5px solid #7E22CE }
+.cat-reg-s    { background:#E2E8F0; color:#334155; border:1.5px solid #334155 }
+.cat-gen-s    { background:#E2E8F0; color:#475569; border:1.5px solid #475569 }
+</style>
+
+{% set cat_cls = {
+  "Accounts Receivable / Payable & Operational Efficiency": "cat-ar",
+  "Company Finances & Results":                            "cat-fin",
+  "Compliance Monitoring":                                 "cat-comp",
+  "Crisis / Bankruptcy & Insolvency":                      "cat-crisis",
+  "Customer Service & Experience Innovations":             "cat-cx",
+  "Digital Transformation & AI":                          "cat-dt",
+  "Expansion, Collaborations & Strategic Alliances":       "cat-exp",
+  "Infrastructure Projects & Initiatives":                 "cat-infra",
+  "Mergers, Acquisitions & Asset Transfers":               "cat-ma",
+  "New Projects / Initiatives":                            "cat-proj",
+  "New Technologies & AI Adoption":                        "cat-tech",
+  "Regulatory Developments & RFP / RFI Announcements":    "cat-reg",
+  "General — review required":                             "cat-gen",
+  "General":                                               "cat-gen",
+} %}
+
+{# ── Summary bar ── #}
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+  <div style="display:flex;align-items:center;gap:10px">
+    <span style="font-size:13px;font-weight:600;color:#0F172A">
+      {{ total_articles }} article{{ 's' if total_articles != 1 else '' }}
+    </span>
+    {% if selected_entity_id %}
+    {% set sel_entity = entities | selectattr('id', 'equalto', selected_entity_id) | first %}
+    {% if sel_entity %}
+    <span style="font-size:11px;font-weight:600;padding:2px 9px;border-radius:99px;background:#F5F3FF;color:#5B21B6;border:1px solid #C4B5FD">{{ sel_entity.name }}</span>
+    {% endif %}
+    {% else %}
+    <span style="font-size:11px;color:#64748B">across {{ entities|length }} industry sectors</span>
+    {% endif %}
+    {% if selected_period and selected_period != 'all' %}
+    <span style="font-size:11px;font-weight:500;padding:2px 9px;border-radius:99px;background:#E8FAF8;color:#0F766E;border:1px solid #99F6E4">{{ selected_period }}</span>
+    {% endif %}
+    {% if selected_date %}
+    <span style="font-size:11px;font-weight:500;padding:2px 9px;border-radius:99px;background:#FFF7ED;color:#9A3412;border:1px solid #FED7AA">{{ selected_date }}</span>
+    {% elif selected_date_from or selected_date_to %}
+    <span style="font-size:11px;font-weight:500;padding:2px 9px;border-radius:99px;background:#FFF7ED;color:#9A3412;border:1px solid #FED7AA">{{ selected_date_from or '…' }} → {{ selected_date_to or '…' }}</span>
+    {% endif %}
+    {% if selected_source %}
+    <span style="font-size:11px;font-weight:500;padding:2px 9px;border-radius:99px;background:#EFF6FF;color:#1D4ED8;border:1px solid #BFDBFE">{{ selected_source }}</span>
+    {% endif %}
+    {% if selected_topic %}
+    <span style="font-size:11px;font-weight:500;padding:2px 9px;border-radius:99px;background:#FDF4FF;color:#86198F;border:1px solid #F0ABFC">{{ selected_topic }}</span>
+    {% endif %}
+    {% if selected_status %}
+    <span style="font-size:11px;font-weight:500;padding:2px 9px;border-radius:99px;background:#F0FDF4;color:#15803D;border:1px solid #BBF7D0">{{ selected_status }}</span>
+    {% endif %}
+  </div>
+</div>
+
+{# ── Collection / validation stats panel ── #}
+{% macro stat_chip(value, label, bg, fg, border) %}
+<div style="display:flex;flex-direction:column;align-items:flex-start;gap:1px;background:{{ bg }};border:1px solid {{ border }};border-radius:8px;padding:6px 10px;min-width:76px">
+  <span style="font-size:15px;font-weight:700;color:{{ fg }};line-height:1.2">{{ value }}</span>
+  <span style="font-size:9.5px;font-weight:600;color:{{ fg }};opacity:0.85;white-space:nowrap">{{ label }}</span>
+</div>
+{% endmacro %}
+
+{% macro stats_panel(title, s) %}
+<div style="background:#fff;border:1px solid #D4DAE8;border-radius:10px;padding:12px 14px;flex:1;min-width:320px;box-shadow:0 1px 3px rgba(0,0,0,0.04)">
+  <div style="font-size:11.5px;font-weight:700;color:#0F172A;margin-bottom:8px;display:flex;align-items:center;gap:6px">
+    <i class="ti ti-chart-bar" style="font-size:12px;color:#5B21B6"></i>{{ title }}
+  </div>
+  <div style="display:flex;flex-wrap:wrap;gap:6px">
+    {{ stat_chip(s.total, "Collected", "#F1F5F9", "#0F172A", "#E2E8F0") }}
+    {{ stat_chip(s.duplicates, "Duplicates", "#FFF7ED", "#C2410C", "#FED7AA") }}
+    {{ stat_chip(s.url_errors, "URL Errors", "#FEF2F2", "#B91C1C", "#FECACA") }}
+    {{ stat_chip(s.date_na, "Date N/A", "#FEFCE8", "#A16207", "#FDE68A") }}
+    {{ stat_chip(s.out_of_window, "Out of Window", "#F5F3FF", "#5B21B6", "#DDD6FE") }}
+    {{ stat_chip(s.not_relevant, "Not Relevant", "#F8FAFC", "#475569", "#E2E8F0") }}
+    {{ stat_chip(s.category_review, "Category Review", "#FFF7ED", "#9A3412", "#FED7AA") }}
+    {{ stat_chip(s.validated, "Validated", "#F0FDF4", "#15803D", "#BBF7D0") }}
+    {{ stat_chip(s.non_validated, "Non Validated", "#FEF2F2", "#B91C1C", "#FECACA") }}
+    {{ stat_chip(s.review, "Review", "#FFFBEB", "#92400E", "#FCD34D") }}
+    {{ stat_chip(s.pending, "Pending AI Validation", "#EFF6FF", "#1D4ED8", "#BFDBFE") }}
+    {{ stat_chip(s.accuracy_pct ~ "%", "Accuracy (" ~ s.validated ~ "/" ~ s.processed ~ ")", "#ECFDF5", "#047857", "#A7F3D0") }}
+  </div>
+</div>
+{% endmacro %}
+
+{% if run_stats and overall_stats %}
+<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px">
+  {{ stats_panel("Current Run" + (" — " + selected_period if selected_period and selected_period != "all" else " — all periods"), run_stats) }}
+  {{ stats_panel("Overall (All-Time)", overall_stats) }}
+</div>
+{% endif %}
+
+{% if articles %}
+<div style="display:flex;flex-direction:column;gap:10px">
+{% for row in articles %}
+{% set n = row.news %}
+{% set e = row.entity %}
+{% set url_ok = n.url_status not in ('invalid', 'broken', 'archive') %}
+
+<div style="background:#fff;border:1px solid #D4DAE8;border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;
+  {% if not url_ok %}opacity:0.65;{% endif %}
+  box-shadow:0 1px 3px rgba(0,0,0,0.04)">
+
+  {# Row 1: Industry badge + category badges + source + date #}
+  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+    <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:99px;background:#F5F3FF;color:#5B21B6;border:1px solid #C4B5FD;white-space:nowrap">
+      <i class="ti ti-building-community" style="font-size:10px;vertical-align:-1px;margin-right:3px"></i>{{ e.name }}
+    </span>
+
+    {% if n.primary_category %}
+    <span class="cat {{ cat_cls.get(n.primary_category, 'cat-gen') }}">{{ n.primary_category }}</span>
+    {% endif %}
+    {% if n.secondary_category %}
+    <span class="cat {{ cat_cls.get(n.secondary_category, 'cat-gen') }}-s" style="margin-left:-4px">{{ n.secondary_category }}</span>
+    {% endif %}
+
+    <span style="margin-left:auto;display:flex;align-items:center;gap:8px;white-space:nowrap">
+      <span style="font-size:10px;color:#64748B">{{ n.source }}</span>
+      <span style="font-size:10px;color:#94A3B8">{{ n.published_date }}</span>
+      {% if n.fetch_source %}
+      <span style="font-size:9px;font-weight:600;padding:1px 6px;border-radius:4px;background:#F1F5F9;color:#64748B;font-family:monospace">{{ n.fetch_source }}</span>
+      {% endif %}
+    </span>
+  </div>
+
+  {# Row 2: Title #}
+  <a href="{{ n.url }}" target="_blank" rel="noopener"
+    style="font-size:13px;font-weight:600;color:#0F172A;text-decoration:none;line-height:1.4;display:block"
+    onmouseover="this.style.color='#2563EB'" onmouseout="this.style.color='#0F172A'">
+    {{ n.title }}
+    {% if n.url_status == 'invalid' %}
+    <span style="font-size:10px;font-weight:500;margin-left:6px;padding:1px 6px;border-radius:4px;background:#FEE2E2;color:#B91C1C">broken link</span>
+    {% elif n.url_status == 'archive' %}
+    <span style="font-size:10px;font-weight:500;margin-left:6px;padding:1px 6px;border-radius:4px;background:#F1F5F9;color:#475569">archived copy</span>
+    {% elif n.url_status == 'paywalled' %}
+    <span style="font-size:10px;font-weight:500;margin-left:6px;padding:1px 6px;border-radius:4px;background:#FEF3C7;color:#92400E">paywall</span>
+    {% endif %}
+  </a>
+
+  {# Validation status badge (populated after AI Validation runs) #}
+  {% if n.validation_status and n.validation_status in ('Validated News', 'Non Validated News', 'Review') %}
+  {% set _vs = n.validation_status %}
+  <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+    <span style="font-size:10px;font-weight:700;padding:2px 9px;border-radius:99px;
+      background:{{ '#DCFCE7' if _vs == 'Validated News' else '#FEE2E2' if _vs == 'Non Validated News' else '#FEF3C7' }};
+      color:{{ '#15803D' if _vs == 'Validated News' else '#B91C1C' if _vs == 'Non Validated News' else '#92400E' }};
+      border:1px solid {{ '#86EFAC' if _vs == 'Validated News' else '#FECACA' if _vs == 'Non Validated News' else '#FCD34D' }};
+      white-space:nowrap">
+      {% if _vs == 'Validated News' %}<i class="ti ti-circle-check" style="font-size:10px;vertical-align:-1px;margin-right:3px"></i>{% elif _vs == 'Non Validated News' %}<i class="ti ti-circle-x" style="font-size:10px;vertical-align:-1px;margin-right:3px"></i>{% else %}<i class="ti ti-alert-triangle" style="font-size:10px;vertical-align:-1px;margin-right:3px"></i>{% endif %}{{ _vs }}
+    </span>
+    {% if n.validation_reason %}
+    <span style="font-size:10px;color:#64748B">{{ n.validation_reason }}</span>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {# Row 3: Summary #}
+  {% if n.summary and n.summary != n.title %}
+  <p style="font-size:12px;color:#475569;margin:0;line-height:1.6">{{ n.summary }}</p>
+  {% endif %}
+
+  {# Paywall note #}
+  {% if n.paywall_note %}
+  <div style="font-size:11px;color:#92400E;background:#FFFBEB;border:0.5px solid #FCD34D;border-radius:5px;padding:4px 10px">
+    <i class="ti ti-lock" style="font-size:11px;vertical-align:-1px;margin-right:4px"></i>{{ n.paywall_note }}
+  </div>
+  {% endif %}
+
+  {# Row 4: Period + fetch date #}
+  <div style="display:flex;align-items:center;gap:10px;font-size:10px;color:#94A3B8">
+    {% if n.period %}
+    <span><i class="ti ti-calendar-event" style="font-size:10px;vertical-align:-1px;margin-right:3px"></i>Period: {{ n.period }}</span>
+    {% endif %}
+    {% if n.fetched_date %}
+    <span>Fetched: {{ n.fetched_date }}</span>
+    {% endif %}
+  </div>
+</div>
+{% endfor %}
+</div>
+
+{% else %}
+<div style="text-align:center;padding:60px 20px;color:#94A3B8">
+  <i class="ti ti-building-community" style="font-size:40px;display:block;margin-bottom:12px"></i>
+  <p style="font-size:14px;font-weight:600;margin-bottom:4px">No industry articles yet</p>
+  <p style="font-size:12px">Run the industry pipeline to fetch news for your industry sectors.</p>
+  {% if entities %}
+  <form method="post" action="/fetch-all-news" style="display:inline-block;margin-top:16px">
+    <input type="hidden" name="period_days" value="30">
+    <input type="hidden" name="entity_type_filter" value="industry">
+    <button type="submit"
+      style="font-size:13px;font-weight:600;padding:10px 20px;border-radius:8px;background:linear-gradient(90deg,#5B21B6,#7C3AED);color:#fff;border:none;cursor:pointer">
+      <i class="ti ti-player-play" style="font-size:13px;vertical-align:-2px;margin-right:6px"></i>Run Industry Pipeline
+    </button>
+  </form>
+  {% endif %}
+</div>
+{% endif %}
+
+{% endblock %}

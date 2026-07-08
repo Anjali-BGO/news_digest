@@ -42,18 +42,6 @@ PER-CATEGORY GUIDANCE — what qualifies for each category:
 SECONDARY CATEGORY: assign only when the article genuinely and substantially covers a second topic — not a passing mention. Leave blank otherwise.
 """.strip()
 
-# ── Retry suffix — injected when first attempt returns "General" or no valid primary
-FORCE_CATEGORY_SUFFIX = """
-
-IMPORTANT — OVERRIDE REQUIRED:
-Your previous response either returned "General" or an unrecognised category, which is not acceptable.
-You MUST select one of the 12 specific categories listed above.
-Rules:
-- "General — review required" and "General" are PROHIBITED in this response.
-- Every business news article maps to at least one of the 12 categories.
-- Choose the closest match even if the fit is imperfect.
-- If the article overlaps two categories, pick the single most dominant one."""
-
 
 # ── System prompt (chief editor role) ─────────────────────────────────────────
 SYSTEM_PROMPT = f"""You are a chief editor at a leading business intelligence firm with 20 years of experience curating corporate and industry news for C-suite executives. You specialise in accounts receivable/payable operations, financial services, B2B outsourcing, and enterprise technology.
@@ -66,39 +54,56 @@ Your responsibilities:
 
 {DISAMBIGUATION}"""
 
+# ── Industry relevance system prompt ──────────────────────────────────────────
+INDUSTRY_SYSTEM_PROMPT = """You are a business news analyst specialising in industry intelligence. You review news articles and make two decisions:
+1. Relevance: Does this article belong to a given industry sector?
+2. Categorisation: If relevant, assign the most appropriate topic category.
+
+Be pragmatic on relevance — mark YES for articles that cover companies, market developments, regulations, deals, technologies, or trends within or adjacent to the named industry sector.
+Reject with NO only for: clearly unrelated sectors, pure electoral/political news with no direct business impact on the sector, entertainment/sports/lifestyle content, or articles with no business relevance whatsoever.
+When in doubt about borderline business news, lean toward YES — a human reviewer can always filter further."""
+
 
 # ── Response parser ────────────────────────────────────────────────────────────
-def _parse_response(text: str) -> dict:
+def _parse_response(text: str, valid_set: set | None = None) -> dict:
     """
-    Parses the structured SUMMARY / PRIMARY / SECONDARY output from GPT.
+    Parses the structured RELEVANT / SUMMARY / PRIMARY / SECONDARY output from GPT.
 
-    Returns a dict with `is_valid = True` only when both `summary` and
-    `primary_category` were successfully extracted AND `primary_category`
-    is a recognised category name. Invalid category names are cleared so
-    that the caller can detect the failure and trigger a retry rather than
-    silently accepting garbage.
+    `is_relevant` is False only when the model explicitly returns "RELEVANT: NO".
+    When the RELEVANT line is absent (company entities), is_relevant defaults to True.
+
+    `is_valid` is True when:
+      - is_relevant is False (rejection is final — no retry needed), OR
+      - is_relevant is True AND both summary and primary_category are present.
     """
+    _valid = valid_set if valid_set is not None else VALID_CATEGORIES
+
     lines = {}
     for line in text.splitlines():
         if ":" in line:
             key, _, val = line.partition(":")
             lines[key.strip().upper()] = val.strip()
 
+    relevant  = lines.get("RELEVANT", "").strip().upper()
     summary   = lines.get("SUMMARY", "").strip()
     primary   = lines.get("PRIMARY", "").strip()
     secondary = lines.get("SECONDARY", "").strip()
 
+    is_relevant = relevant != "NO"   # True when absent (non-industry) or "YES"
+
     # Clear any value the model invented outside the approved category list
-    if primary not in VALID_CATEGORIES:
+    if primary not in _valid:
         primary = ""
-    if secondary and secondary not in VALID_CATEGORIES:
+    if secondary and secondary not in _valid:
         secondary = ""
 
     return {
         "summary":            summary,
         "primary_category":   primary,
         "secondary_category": secondary,
-        "is_valid":           bool(summary) and bool(primary),
+        "is_relevant":        is_relevant,
+        # A rejected-as-irrelevant answer needs no retry; valid content needs summary+primary
+        "is_valid":           (not is_relevant) or (bool(summary) and bool(primary)),
     }
 
 
@@ -107,6 +112,9 @@ async def summarize_article(
     title:       str,
     content:     str,
     entity_name: str,
+    categories:  list | None = None,
+    entity_type: str = "",
+    news_scope:  str = "",
 ) -> dict:
     """
     Calls GPT-4o-mini to generate a 2–3 sentence summary and assign categories.
@@ -138,28 +146,70 @@ async def summarize_article(
             "secondary_category": str,
         }
     """
+    # Build category list — use entity-specific categories when provided
+    cat_list          = categories if categories else TOPIC_CATEGORIES
+    category_list_str = "\n".join(f"{i+1}. {c}" for i, c in enumerate(cat_list))
+    valid_set         = set(cat_list)
+    n_cats            = len(cat_list)
+    is_industry       = entity_type == "industry"
+
     # Build input — use content if substantial, otherwise title only
     body = content.strip() if content and len(content.strip()) >= 60 else ""
     input_text = f"Title: {title}\n\nContent: {body[:1800]}" if body else f"Title: {title}"
 
-    user_prompt = f"""Review this article about '{entity_name}' and complete the following tasks.
+    if is_industry:
+        system_prompt = INDUSTRY_SYSTEM_PROMPT
+        scope_line = f"\nThis industry sector covers: {news_scope}" if news_scope else ""
+        user_prompt = f"""Review this article and determine if it is relevant to the industry sector: '{entity_name}'.{scope_line}
+
+RELEVANCE: Answer YES if the article covers companies, market developments, regulations, deals, technology, or events within or directly affecting the {entity_name} industry. Answer NO if it is about an unrelated sector, pure entertainment/sports/lifestyle, pure electoral news with no business impact, or has no meaningful business connection to {entity_name}.
+
+If RELEVANT = YES, also:
+1. Write a 2–3 sentence business-focused summary highlighting the key business impact.
+2. Assign the single best PRIMARY category from the {n_cats} categories below.
+3. Assign a SECONDARY category only if the article genuinely and substantially covers a second topic. Leave blank otherwise.
+
+Categories:
+{category_list_str}
+
+Article:
+{input_text}
+
+Respond in this exact format with no extra text:
+RELEVANT: YES or NO
+SUMMARY: <2–3 sentence summary if RELEVANT=YES, else leave blank>
+PRIMARY: <exact category name if RELEVANT=YES, else leave blank>
+SECONDARY: <exact category name or leave blank>"""
+
+        force_suffix = f"""
+
+IMPORTANT — OVERRIDE REQUIRED:
+Your previous response was missing a valid category while RELEVANT=YES. This is not acceptable.
+You MUST either:
+  a) Set RELEVANT: NO if the article truly does not belong to the {entity_name} sector, OR
+  b) Set RELEVANT: YES and select one of the {n_cats} specific categories listed above.
+"General" is PROHIBITED. Every relevant business article maps to one of the {n_cats} categories."""
+
+    else:
+        system_prompt = SYSTEM_PROMPT
+        user_prompt = f"""Review this article about '{entity_name}' and complete the following tasks.
 
 STRICT RULES:
 - Do NOT rewrite, rephrase, or modify the article title.
 - Do NOT include the title in your response.
 - Only output the three fields below — nothing else.
-- You MUST assign one of the 12 specific categories. "General" is only acceptable if
+- You MUST assign one of the {n_cats} specific categories. "General" is only acceptable if
   the article contains no classifiable business information whatsoever.
 
 Tasks:
 1. Write a 2–3 sentence business-focused summary highlighting the key business impact.
    If only the title is available, summarise from the title alone.
-2. Assign the single best PRIMARY category from the 12 categories below.
+2. Assign the single best PRIMARY category from the {n_cats} categories below.
 3. Assign a SECONDARY category only if the article genuinely and substantially covers
    a second topic. Leave blank if not applicable.
 
 Categories:
-{CATEGORY_LIST}
+{category_list_str}
 
 Article:
 {input_text}
@@ -168,6 +218,17 @@ Respond in this exact format with no extra text:
 SUMMARY: <2–3 sentence summary>
 PRIMARY: <exact category name>
 SECONDARY: <exact category name or leave blank>"""
+
+        force_suffix = f"""
+
+IMPORTANT — OVERRIDE REQUIRED:
+Your previous response either returned "General" or an unrecognised category, which is not acceptable.
+You MUST select one of the {n_cats} specific categories listed above.
+Rules:
+- "General — review required" and "General" are PROHIBITED in this response.
+- Every business news article maps to at least one of the {n_cats} categories.
+- Choose the closest match even if the fit is imperfect.
+- If the article overlaps two categories, pick the single most dominant one."""
 
     total_prompt_tokens     = 0
     total_completion_tokens = 0
@@ -184,24 +245,28 @@ SECONDARY: <exact category name or leave blank>"""
         resp = await client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user",   "content": user_prompt},
             ],
             max_tokens=350,
             temperature=0.2,
         )
         _accumulate(resp.usage)
-        first_parsed = _parse_response(resp.choices[0].message.content.strip())
+        first_parsed = _parse_response(resp.choices[0].message.content.strip(), valid_set)
 
         if first_parsed["is_valid"]:
-            log.info(
-                f"'{title[:50]}' — tokens: {total_prompt_tokens}p + {total_completion_tokens}c"
-            )
+            if not first_parsed["is_relevant"]:
+                log.info(f"'{title[:50]}' — AI: not relevant to '{entity_name}'")
+            else:
+                log.info(
+                    f"'{title[:50]}' — tokens: {total_prompt_tokens}p + {total_completion_tokens}c"
+                )
             return {
                 "title":              title,
                 "summary":            first_parsed["summary"],
                 "primary_category":   first_parsed["primary_category"],
                 "secondary_category": first_parsed["secondary_category"],
+                "is_relevant":        first_parsed["is_relevant"],
                 "ai_calls":           1,
                 "prompt_tokens":      total_prompt_tokens,
                 "completion_tokens":  total_completion_tokens,
@@ -220,18 +285,18 @@ SECONDARY: <exact category name or leave blank>"""
     # Lower temperature + explicit override prompt pushes the model to commit
     # to the most relevant specific category instead of taking the easy "General" exit.
     try:
-        retry_prompt = user_prompt + FORCE_CATEGORY_SUFFIX
+        retry_prompt = user_prompt + force_suffix
         resp2 = await client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user",   "content": retry_prompt},
             ],
             max_tokens=350,
             temperature=0.1,
         )
         _accumulate(resp2.usage)
-        parsed2 = _parse_response(resp2.choices[0].message.content.strip())
+        parsed2 = _parse_response(resp2.choices[0].message.content.strip(), valid_set)
 
         log.info(
             f"'{title[:50]}' retry accepted — primary='{parsed2['primary_category']}' "
@@ -243,6 +308,7 @@ SECONDARY: <exact category name or leave blank>"""
             # Only reach "General" here if the retry response was also unparseable
             "primary_category":   parsed2["primary_category"] or "General — review required",
             "secondary_category": parsed2["secondary_category"],
+            "is_relevant":        parsed2["is_relevant"],
             "ai_calls":           2,         # both calls counted
             "prompt_tokens":      total_prompt_tokens,
             "completion_tokens":  total_completion_tokens,
@@ -263,6 +329,7 @@ SECONDARY: <exact category name or leave blank>"""
             "summary":            first_parsed["summary"] or title,
             "primary_category":   first_parsed["primary_category"] or "General — review required",
             "secondary_category": first_parsed["secondary_category"],
+            "is_relevant":        first_parsed.get("is_relevant", True),
             "ai_calls":           2,
             "prompt_tokens":      total_prompt_tokens,
             "completion_tokens":  total_completion_tokens,
@@ -272,7 +339,8 @@ SECONDARY: <exact category name or leave blank>"""
         "summary":            title,
         "primary_category":   "General — review required",
         "secondary_category": "",
-        "ai_calls":           2,   # both attempts were made before reaching this fallback
+        "is_relevant":        True,   # fallback: assume relevant, human can review
+        "ai_calls":           2,
         "prompt_tokens":      total_prompt_tokens,
         "completion_tokens":  total_completion_tokens,
     }

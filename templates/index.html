@@ -124,6 +124,8 @@
     {% elif msg == 'duplicate' %}<i class="ti ti-alert-triangle" style="font-size:13px;vertical-align:-2px;margin-right:6px"></i><strong>{{ msg_name }}</strong> already exists. No duplicate created.
     {% elif msg == 'deleted' %}<i class="ti ti-trash" style="font-size:13px;vertical-align:-2px;margin-right:6px"></i><strong>{{ msg_name }}</strong> deleted.
     {% elif msg == 'already_running' %}<i class="ti ti-alert-triangle" style="font-size:13px;vertical-align:-2px;margin-right:6px"></i>A fetch is already running.
+    {% elif msg == 'invalid_entity' %}<i class="ti ti-alert-triangle" style="font-size:13px;vertical-align:-2px;margin-right:6px"></i>Could not add entity — name is required and type must be client, prospect, or industry.
+    {% elif msg == 'no_source_selected' %}<i class="ti ti-alert-triangle" style="font-size:13px;vertical-align:-2px;margin-right:6px"></i>Select at least one news source before running the pipeline.
     {% elif msg == 'upload' %}
       {% if error == 'no_file' %}<i class="ti ti-alert-triangle" style="font-size:13px;vertical-align:-2px;margin-right:6px"></i>No file selected.
       {% elif error == 'bad_format' %}<i class="ti ti-alert-triangle" style="font-size:13px;vertical-align:-2px;margin-right:6px"></i>Unsupported format. Use .csv, .xlsx or .xls.
@@ -256,6 +258,7 @@
           <i class="ti ti-player-play"></i>Fetch All News
         </button>
       </form>
+
     </div>
 
   </div><!-- end col 1 -->

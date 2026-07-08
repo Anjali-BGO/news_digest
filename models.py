@@ -37,6 +37,15 @@ class Entity(BaseModel):
 
 
 class NewsItem(BaseModel):
+    # NOTE: this is the shape of articles stored in data.json (what get_all_news()
+    # deserializes). industry_all_records.json / industry_accepted.json /
+    # industry_rejected.json are a deliberately separate, un-validated raw-dict
+    # representation used internally by services/industry_validator.py — they
+    # carry pipeline-only bookkeeping fields not listed here (industry_sector,
+    # run_id, clean_title, secondary_categories [plural], ai_confidence, ai_note).
+    # Only validation_status/validation_reason/url_status/title/summary/category
+    # get mirrored from there into a NewsItem via storage.update_industry_validation_status().
+
     # ── Core article fields ────────────────────────────────────────────────────
     title:              str            # original title — never modified
     url:                str            # final URL (updated if redirect followed)
@@ -55,10 +64,13 @@ class NewsItem(BaseModel):
     entity_type:        str            # "client" | "prospect" | "industry"
 
     # ── Quality / audit fields ─────────────────────────────────────────────────
-    url_status:         Optional[str]  = "ok"    # ok | redirect | invalid | unknown
+    url_status:         Optional[str]  = "ok"    # ok | redirect | archive | invalid | unknown | missing
     duplicate_flag:     Optional[bool] = False
-    validation_status:  Optional[str]  = "pass"  # pass | rejected
-    rejection_reason:   Optional[str]  = ""
+    validation_status:  Optional[str]  = None    # None | "Validated News" | "Non Validated News" | "Review"
+    rejection_reason:   Optional[str]  = ""      # legacy — kept for backward compat
+    validation_reason:  Optional[str]  = None    # human-readable validation outcome (AI Validation)
+    industry_type:      Optional[str]  = None    # entity's industry_type (industry articles only)
+    content:            Optional[str]  = None    # raw article body preserved for AI re-use
 
     # ── Paywall handling fields ────────────────────────────────────────────────
     original_url:       Optional[str]  = ""      # set when paywall alt link used
@@ -67,15 +79,20 @@ class NewsItem(BaseModel):
     # ── Fetch metadata ─────────────────────────────────────────────────────────
     topic_queried:      Optional[str]  = ""      # which of 12 topics found this
     is_primary_topic:   Optional[bool] = False   # was topic assigned to entity?
-    fetch_source:       Optional[str]  = ""      # "tavily" | "serpapi" | "newsdata" | "newsapi" | "newsai"
+    fetch_source:       Optional[str]  = ""      # "tavily" | "serpapi" | "newsdata" | "newsai"
 
 
 class AuditEntry(BaseModel):
     run_date:      str
     entity_id:     str
     entity_name:   str
+    entity_type:   Optional[str] = ""   # "client" | "prospect" | "industry"
     article_title: str
-    action:        str    # "duplicate_removed" | "validation_rejected" | "url_invalid"
+    action:        str    # "accepted" | "duplicate_removed" | "validation_rejected" | "url_invalid"
+                           # | "industry_validated" | "industry_non_validated" | "industry_review"
     reason:        str
     source_url:    str
+    fetch_source:  Optional[str] = ""   # "tavily" | "serpapi" | "newsdata" | "newsai"
+    window_from:   Optional[str] = ""   # report period start YYYY-MM-DD
+    window_to:     Optional[str] = ""   # report period end YYYY-MM-DD
     

@@ -17,18 +17,28 @@ load_dotenv()
 log = get_logger("news_fetcher")
 
 TAVILY_API_KEY        = os.getenv("TAVILY_API_KEY")
+TAVILY_API_KEYS       = [k for k in [os.getenv("TAVILY_API_KEY"), os.getenv("TAVILY_API_KEY_2")] if k]
 SERPAPI_API_KEY       = os.getenv("SERPAPI_API_KEY")
 NEWSDATA_API_KEY      = os.getenv("NEWSDATA_API_KEY")
-NEWSAPI_API_KEY       = os.getenv("NEWSAPI_API_KEY")
 NEWSAI_API_KEY        = os.getenv("NEWSAI_API_KEY")
 
 TAVILY_MAX_RESULTS    = int(os.getenv("TAVILY_MAX_RESULTS",   4))
 SERPAPI_MAX_RESULTS   = int(os.getenv("SERPAPI_MAX_RESULTS",  4))
 NEWSDATA_MAX_RESULTS  = int(os.getenv("NEWSDATA_MAX_RESULTS", 4))
-NEWSAPI_MAX_RESULTS   = int(os.getenv("NEWSAPI_MAX_RESULTS",  4))
 NEWSAI_MAX_RESULTS    = int(os.getenv("NEWSAI_MAX_RESULTS",   4))
 
+# Industry entities need higher fetch volumes (no entity-name filter means more
+# articles per call are needed to cover the sector breadth).
+TAVILY_INDUSTRY_MAX_RESULTS   = int(os.getenv("TAVILY_INDUSTRY_MAX_RESULTS",   20))
+SERPAPI_INDUSTRY_MAX_RESULTS  = int(os.getenv("SERPAPI_INDUSTRY_MAX_RESULTS",  20))
+NEWSDATA_INDUSTRY_MAX_RESULTS = int(os.getenv("NEWSDATA_INDUSTRY_MAX_RESULTS", 20))
+NEWSAI_INDUSTRY_MAX_RESULTS   = int(os.getenv("NEWSAI_INDUSTRY_MAX_RESULTS",   20))
+
 MAX_ARTICLES_PER_ENTITY = int(os.getenv("MAX_ARTICLES_PER_ENTITY", 0))  # 0 = no cap
+
+# Tavily news scores range 0.02–0.23; set low so the validator decides relevance,
+# not a score threshold that silently drops valid low-scored articles.
+TAVILY_MIN_SCORE = float(os.getenv("TAVILY_MIN_SCORE", 0.05))
 
 # Default sources when none are selected
 DEFAULT_SOURCES = ["tavily"]
@@ -113,8 +123,8 @@ def _extract_domain(website: str) -> str:
         return ""
     try:
         url = website if "://" in website else f"https://{website}"
-        netloc = urlparse(url).netloc
-        return netloc.lstrip("www.").lower()
+        netloc = urlparse(url).netloc.lower()
+        return netloc[4:] if netloc.startswith("www.") else netloc
     except Exception:
         return ""
 
@@ -237,31 +247,58 @@ def _parse_serpapi_date(raw: str, fallback: str) -> str:
 
 
 # ── Tavily ─────────────────────────────────────────────────────────────────────
-async def _tavily_query(query: str, window: dict) -> List[dict]:
-    if not TAVILY_API_KEY or "tavily" in _exhausted:
+def _next_tavily_key() -> Optional[tuple]:
+    """Return (api_key, key_index) of the first non-exhausted Tavily key, or None."""
+    for i, key in enumerate(TAVILY_API_KEYS):
+        if f"tavily_{i}" not in _exhausted:
+            return key, i
+    return None
+
+
+def _mark_tavily_key_exhausted(key_idx: int) -> None:
+    """Mark a specific key exhausted; if all keys are exhausted, disable the source."""
+    _exhausted.add(f"tavily_{key_idx}")
+    if all(f"tavily_{i}" in _exhausted for i in range(len(TAVILY_API_KEYS))):
+        _exhausted.add("tavily")
+        log.warning("All Tavily keys exhausted — source disabled for remainder of this run")
+    else:
+        log.warning(
+            f"Tavily key {key_idx + 1}/{len(TAVILY_API_KEYS)} exhausted"
+            f" — switching to key {key_idx + 2}"
+        )
+
+
+async def _tavily_query(query: str, window: dict, max_results: int = 0) -> List[dict]:
+    if not TAVILY_API_KEYS or "tavily" in _exhausted:
         return []
-    try:
-        def _sync_search():
-            client = TavilyClient(TAVILY_API_KEY)
-            return client.search(
-                query=query,
-                topic="news",
-                search_depth="basic",
-                max_results=TAVILY_MAX_RESULTS,
-                start_date=window["from"],
-                end_date=window["to"],
-                exclude_domains=TAVILY_EXCLUDE_DOMAINS,
-            )
-        response = await asyncio.to_thread(_sync_search)
-        return response.get("results", [])
-    except Exception as e:
-        err = str(e).lower()
-        if any(kw in err for kw in ("429", "quota", "credit", "exceeded", "limit", "usage")):
-            _exhausted.add("tavily")
-            log.warning("Tavily credits exhausted — source disabled for remainder of this run")
-        else:
+    n = max_results or TAVILY_MAX_RESULTS
+    # Cycle through available keys — if one is exhausted mid-run, the next is tried.
+    for key_idx, api_key in enumerate(TAVILY_API_KEYS):
+        if f"tavily_{key_idx}" in _exhausted:
+            continue
+        try:
+            def _sync_search(ak=api_key):
+                client = TavilyClient(ak)
+                kwargs = dict(
+                    query=query,
+                    topic="news",
+                    search_depth="basic",
+                    max_results=n,
+                    start_date=window["from"],
+                    end_date=window["to"],
+                    exclude_domains=TAVILY_EXCLUDE_DOMAINS,
+                )
+                return client.search(**kwargs)
+            response = await asyncio.to_thread(_sync_search)
+            return response.get("results", [])
+        except Exception as e:
+            err = str(e).lower()
+            if any(kw in err for kw in ("429", "quota", "credit", "exceeded", "limit", "usage")):
+                _mark_tavily_key_exhausted(key_idx)
+                continue  # try next key
             log.error(f"Tavily error for '{query}': {e}")
-        return []
+            return []
+    return []
 
 
 def _to_google_date(yyyymmdd: str) -> str:
@@ -271,7 +308,7 @@ def _to_google_date(yyyymmdd: str) -> str:
 
 
 # ── SerpAPI (Google News tab) ──────────────────────────────────────────────────
-async def _serpapi_query(query: str, window: dict) -> List[dict]:
+async def _serpapi_query(query: str, window: dict, max_results: int = 0) -> List[dict]:
     """
     Fetches news via SerpAPI using Google Web Search + tbm=nws (News tab).
     Returns published_at (ISO datetime) for reliable date parsing.
@@ -279,6 +316,7 @@ async def _serpapi_query(query: str, window: dict) -> List[dict]:
     """
     if not SERPAPI_API_KEY or "serpapi" in _exhausted:
         return []
+    n = max_results or SERPAPI_MAX_RESULTS
     try:
         async with httpx.AsyncClient(timeout=20) as client:
             resp = await client.get(
@@ -288,7 +326,7 @@ async def _serpapi_query(query: str, window: dict) -> List[dict]:
                     "tbm":           "nws",
                     "q":             query,
                     "api_key":       SERPAPI_API_KEY,
-                    "num":           SERPAPI_MAX_RESULTS,
+                    "num":           n,
                     "google_domain": "google.com",
                     "hl":            "en",
                     "gl":            "us",
@@ -310,13 +348,14 @@ async def _serpapi_query(query: str, window: dict) -> List[dict]:
 
 
 # ── NewsData.io ────────────────────────────────────────────────────────────────
-async def _newsdata_query(query: str, window: dict) -> List[dict]:
+async def _newsdata_query(query: str, window: dict, max_results: int = 0) -> List[dict]:
     """
     Fetches news via NewsData.io.
     Requires NEWSDATA_API_KEY in .env.
     """
-    if not NEWSDATA_API_KEY or "newsdata" in _exhausted:
+    if not NEWSDATA_API_KEY or "newsdata_io" in _exhausted:
         return []
+    n = max_results or NEWSDATA_MAX_RESULTS
     try:
         async with httpx.AsyncClient(timeout=20) as client:
             resp = await client.get(
@@ -327,7 +366,7 @@ async def _newsdata_query(query: str, window: dict) -> List[dict]:
                     "language":        "en",
                     "from_date":       window["from"],
                     "to_date":         window["to"],
-                    "size":            NEWSDATA_MAX_RESULTS,
+                    "size":            n,
                     "image":           0,
                     "removeduplicate": 1,
                 }
@@ -336,56 +375,13 @@ async def _newsdata_query(query: str, window: dict) -> List[dict]:
             return resp.json().get("results", [])
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 429:
-            _exhausted.add("newsdata")
+            _exhausted.add("newsdata_io")
             log.warning("NewsData.io credits exhausted — source disabled for remainder of this run")
         else:
             log.error(f"NewsData error for '{query}': {e}")
         return []
     except Exception as e:
         log.error(f"NewsData error for '{query}': {e}")
-        return []
-
-
-# ── NewsAPI.org ────────────────────────────────────────────────────────────────
-async def _newsapi_query(query: str, window: dict) -> List[dict]:
-    """
-    Fetches news via NewsAPI.org (everything endpoint).
-    Requires NEWSAPI_API_KEY in .env.
-    Free tier: English news, up to 100 req/day, 30-day history.
-    """
-    if not NEWSAPI_API_KEY or "newsapi" in _exhausted:
-        return []
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            resp = await client.get(
-                "https://newsapi.org/v2/everything",
-                params={
-                    "q":        query,
-                    "apiKey":   NEWSAPI_API_KEY,
-                    "language": "en",
-                    "from":     window["from"],
-                    "to":       window["to"],
-                    "pageSize": NEWSAPI_MAX_RESULTS,
-                    "sortBy":   "publishedAt",
-                }
-            )
-            resp.raise_for_status()
-            # NewsAPI.org returns 200 with status:"error" for rate-limit on some plans
-            data = resp.json()
-            if data.get("status") == "error" and data.get("code") in ("rateLimited", "maximumResultsReached"):
-                _exhausted.add("newsapi")
-                log.warning("NewsAPI.org credits exhausted — source disabled for remainder of this run")
-                return []
-            return data.get("articles", [])
-    except httpx.HTTPStatusError as e:
-        if e.response.status_code in (426, 429):
-            _exhausted.add("newsapi")
-            log.warning("NewsAPI.org credits exhausted — source disabled for remainder of this run")
-        else:
-            log.error(f"NewsAPI error for '{query}': {e}")
-        return []
-    except Exception as e:
-        log.error(f"NewsAPI error for '{query}': {e}")
         return []
 
 
@@ -407,7 +403,7 @@ async def _newsai_query(
     Fetches NEWSAI_MAX_RESULTS * 4 articles to compensate for no topic pre-filter.
     Requires NEWSAI_API_KEY in .env.
     """
-    if not NEWSAI_API_KEY or "newsai" in _exhausted:
+    if not NEWSAI_API_KEY or "newsapi_ai" in _exhausted:
         return []
     try:
         from eventregistry import (
@@ -415,16 +411,7 @@ async def _newsai_query(
             ReturnInfo, ArticleInfoFlags,
         )
 
-        # Title-only for companies (precise, avoids arena/city name collisions).
-        # Title+body for industries (broad terms rarely appear in article titles alone).
-        kw_loc = "title" if entity_type in ("client", "prospect") else "title,body"
-
-        # For title-only search the domain URL never appears in headlines — omit it.
-        # For body search, domain helps disambiguate companies sharing a common name.
-        parts = [entity_name]
-        if domain and kw_loc != "title":
-            parts.append(domain)
-        keyword_str = " ".join(parts)
+        keyword_str, kw_loc = _build_newsai_keywords(entity_name, entity_type, domain)
 
         max_items = NEWSAI_MAX_RESULTS * 4  # fetch more since no topic pre-filter
 
@@ -452,22 +439,59 @@ async def _newsai_query(
     except Exception as e:
         err = str(e).lower()
         if any(kw in err for kw in ("429", "quota", "credit", "exceeded", "limit", "usage")):
-            _exhausted.add("newsai")
+            _exhausted.add("newsapi_ai")
             log.warning("NewsAPI.ai credits exhausted — source disabled for remainder of this run")
         else:
             log.error(f"NewsAPI.ai error for '{entity_name}': {e}")
         return []
 
 
+# ── Source name helpers ────────────────────────────────────────────────────────
+def _url_to_publisher(url: str) -> str:
+    """
+    Derive a clean publisher name from an article URL.
+    Used by Tavily which returns no separate source field.
+    e.g. 'https://www.reuters.com/article/...' → 'Reuters'
+         'https://finance.yahoo.com/news/...'  → 'Yahoo'
+         'https://techcrunch.com/2024/...'     → 'Techcrunch'
+    """
+    if not url:
+        return "Unknown"
+    try:
+        host = (urlparse(url).hostname or "").lower()
+        # Strip leading subdomain prefixes
+        for pfx in ("www.", "www2.", "m.", "news.", "feeds.", "finance.", "blog.", "amp."):
+            if host.startswith(pfx):
+                host = host[len(pfx):]
+                break
+        # Take the first label only — drops TLD, ccTLD etc.
+        # e.g. reuters.com → reuters,  bbc.co.uk → bbc
+        name = host.split(".")[0]
+        return name.replace("-", " ").title() if name else "Unknown"
+    except Exception:
+        return "Unknown"
+
+
+def _slug_to_publisher(slug: str) -> str:
+    """Format a NewsData source_id slug into a readable name.
+    e.g. 'the-guardian' → 'The Guardian',  'reuters' → 'Reuters'
+    """
+    if not slug:
+        return "Unknown"
+    return slug.replace("-", " ").replace("_", " ").title()
+
+
 # ── Result normalisers ─────────────────────────────────────────────────────────
 def _norm_tavily(r: dict, topic: str, topics: List[str]) -> Optional[dict]:
     if not r.get("title"):
+        return None
+    if r.get("score", 1.0) < TAVILY_MIN_SCORE:
         return None
     raw_date = r.get("published_date") or ""
     return {
         "title":            r.get("title", "").strip(),
         "url":              r.get("url", ""),
-        "source":           r.get("url", "").split("/")[2] if r.get("url") else "Unknown",
+        "source":           _url_to_publisher(r.get("url", "")),
         "published_date":   _normalise_date(raw_date, "") or None,
         "content":          r.get("content", ""),
         "fetch_source":     "tavily",
@@ -504,32 +528,16 @@ def _norm_newsdata(r: dict, topic: str, topics: List[str]) -> Optional[dict]:
     if not r.get("title"):
         return None
     raw_date = r.get("pubDate") or ""
+    source_name = r.get("source_name", "")
+    source_id   = r.get("source_id", "")
     return {
         "title":            r.get("title", "").strip(),
         "url":              r.get("link", ""),
-        "source":           r.get("source_name", "") or r.get("source_id", "Unknown"),
+        "source":           source_name or _slug_to_publisher(source_id) if (source_name or source_id) else "Unknown",
         "published_date":   _normalise_date(raw_date, "") or None,
         "content":          r.get("description", "") or r.get("content", ""),
         "language":         r.get("language", ""),
-        "fetch_source":     "newsdata",
-        "topic_queried":    topic,
-        "is_primary_topic": topic in topics,
-    }
-
-
-def _norm_newsapi(r: dict, topic: str, topics: List[str]) -> Optional[dict]:
-    if not r.get("title") or r.get("title") == "[Removed]":
-        return None
-    source_obj = r.get("source", {})
-    source = source_obj.get("name", "") if isinstance(source_obj, dict) else str(source_obj)
-    raw_date = r.get("publishedAt") or ""
-    return {
-        "title":            r.get("title", "").strip(),
-        "url":              r.get("url", ""),
-        "source":           source or "Unknown",
-        "published_date":   _normalise_date(raw_date, "") or None,
-        "content":          r.get("description", "") or r.get("content", ""),
-        "fetch_source":     "newsapi",
+        "fetch_source":     "newsdata_io",
         "topic_queried":    topic,
         "is_primary_topic": topic in topics,
     }
@@ -547,24 +555,74 @@ def _norm_newsai(r: dict, topic: str, topics: List[str]) -> Optional[dict]:
         "source":           source or "Unknown",
         "published_date":   _normalise_date(raw_date, "") or None,
         "content":          r.get("body", ""),
-        "fetch_source":     "newsai",
+        "fetch_source":     "newsapi_ai",
         "topic_queried":    topic,
         "is_primary_topic": topic in topics,
     }
 
 
 # ── Main fetch ─────────────────────────────────────────────────────────────────
-def _build_nl_query(entity_name: str, entity_type: str, domain: str, topic: str) -> str:
+# Each of the remaining topic-driven APIs (SerpAPI, NewsData) gets its own query
+# builder so either one can be tuned — e.g. to anchor the entity name and reduce
+# search drift — without affecting the other.
+
+def _build_serpapi_query(entity_name: str, entity_type: str, domain: str, topic: str) -> str:
     """
-    Natural-language query used by all four APIs.
-    Format: "Latest news on Stripe (stripe.com) related to <topic>"
-    Avoids quoted strings and bare & characters that cause parse errors in some APIs.
+    SerpAPI (Google News via tbm=nws) query.
+    Natural-language phrasing, no quoted phrase — currently a candidate for tightening,
+    since unanchored entity names can drift to topically-adjacent but unrelated results.
     """
     if domain:
         return f"Latest news on {entity_name} {domain} related to {topic}"
     if entity_type in ("client", "prospect"):
         return f"Latest news on {entity_name} company related to {topic}"
     return f"Latest news on {entity_name} related to {topic}"
+
+
+def _build_newsdata_query(entity_name: str, entity_type: str, domain: str, topic: str) -> str:
+    """
+    NewsData.io query.
+    Natural-language phrasing — avoids quoted strings, which NewsData's `q` param
+    does not require and does not reliably improve precision for.
+    """
+    if domain:
+        return f"Latest news on {entity_name} {domain} related to {topic}"
+    if entity_type in ("client", "prospect"):
+        return f"Latest news on {entity_name} company related to {topic}"
+    return f"Latest news on {entity_name} related to {topic}"
+
+
+def _build_newsai_keywords(entity_name: str, entity_type: str, domain: str) -> tuple:
+    """
+    NewsAPI.ai (EventRegistry) keyword string + keywordsLoc flag.
+    Title-only for companies (precise, avoids arena/city name collisions).
+    Title+body for industries (broad terms rarely appear in article titles alone).
+    Returns (keyword_str, kw_loc).
+    """
+    kw_loc = "title" if entity_type in ("client", "prospect") else "title,body"
+    parts  = [entity_name]
+    if domain and kw_loc != "title":
+        parts.append(domain)
+    return " ".join(parts), kw_loc
+
+
+def _build_tavily_company_query(entity_name: str) -> str:
+    """
+    Query for client/prospect entities.
+    Quoted phrase anchors Tavily on the exact company name, preventing
+    semantic drift to unrelated companies (e.g. "Mercury" → mining firms).
+    """
+    return f'"{entity_name}"'
+
+
+def _build_tavily_industry_query(entity_name: str) -> str:
+    """
+    Query for industry entities.
+    Industry names are meta-category labels ("Financial Services & Banking")
+    that never appear verbatim in articles. Strip punctuation so Tavily does
+    semantic/keyword matching across the topic area instead.
+    """
+    return re.sub(r"[&/]", " ", entity_name).strip()
 
 
 async def fetch_all_news(
@@ -578,7 +636,7 @@ async def fetch_all_news(
     """
     Queries all 12 TOPIC_CATEGORIES for the entity using the selected API sources.
 
-    api_sources:  list of any combination of "tavily", "serpapi", "newsdata", "newsapi", "newsai".
+    api_sources:  list of any combination of "tavily", "serpapi", "newsdata_io", "newsapi_ai".
                   Defaults to ["tavily"] when None or empty.
 
     entity_website: if provided, the bare domain is appended to each query so that
@@ -593,33 +651,42 @@ async def fetch_all_news(
     all_articles = []
     topic_gaps   = []
     domain       = _extract_domain(entity_website)
+    first_topic  = topics[0] if topics else (TOPIC_CATEGORIES[0] if TOPIC_CATEGORIES else "")
+    is_industry  = entity_type == "industry"
 
+    # Industry entities use higher per-call limits to compensate for broader queries
+    _tav_n  = TAVILY_INDUSTRY_MAX_RESULTS   if is_industry else TAVILY_MAX_RESULTS
+    _ser_n  = SERPAPI_INDUSTRY_MAX_RESULTS  if is_industry else SERPAPI_MAX_RESULTS
+    _ndd_n  = NEWSDATA_INDUSTRY_MAX_RESULTS if is_industry else NEWSDATA_MAX_RESULTS
+
+    # ── Tavily: one entity-level call, no topic subdivision ─────────────────────
+    # One call per entity with topic="news" to restrict to news publishers.
+    # AI categorises topics downstream — no value in 12 separate topic queries.
+    if "tavily" in sources:
+        if is_industry:
+            _tavily_q = _build_tavily_industry_query(entity_name)
+        else:
+            _tavily_q = _build_tavily_company_query(entity_name)
+        for r in await _tavily_query(_tavily_q, window, max_results=_tav_n):
+            item = _norm_tavily(r, first_topic, topics)
+            if item:
+                all_articles.append(item)
+
+    # ── Topic loop for SerpAPI / NewsData — each builds its own query ───────────
     for topic in TOPIC_CATEGORIES:
-        nl_query = _build_nl_query(entity_name, entity_type, domain, topic)
-
         results = []
 
-        if "tavily" in sources:
-            for r in await _tavily_query(nl_query, window):
-                item = _norm_tavily(r, topic, topics)
-                if item:
-                    results.append(item)
-
         if "serpapi" in sources:
-            for r in await _serpapi_query(nl_query, window):
+            _serpapi_q = _build_serpapi_query(entity_name, entity_type, domain, topic)
+            for r in await _serpapi_query(_serpapi_q, window, max_results=_ser_n):
                 item = _norm_serpapi(r, topic, topics)
                 if item:
                     results.append(item)
 
-        if "newsdata" in sources:
-            for r in await _newsdata_query(nl_query, window):
+        if "newsdata_io" in sources:
+            _newsdata_q = _build_newsdata_query(entity_name, entity_type, domain, topic)
+            for r in await _newsdata_query(_newsdata_q, window, max_results=_ndd_n):
                 item = _norm_newsdata(r, topic, topics)
-                if item:
-                    results.append(item)
-
-        if "newsapi" in sources:
-            for r in await _newsapi_query(nl_query, window):
-                item = _norm_newsapi(r, topic, topics)
                 if item:
                     results.append(item)
 
@@ -629,8 +696,8 @@ async def fetch_all_news(
             topic_gaps.append(topic)
 
     # NewsAPI.ai: one call per entity (not per topic — topic AND kills results)
-    if "newsai" in sources:
-        first_topic = topics[0] if topics else (TOPIC_CATEGORIES[0] if TOPIC_CATEGORIES else "")
+    if "newsapi_ai" in sources:
+        _newsai_n = NEWSAI_INDUSTRY_MAX_RESULTS if is_industry else NEWSAI_MAX_RESULTS
         for r in await _newsai_query(entity_name, entity_type, domain, window):
             item = _norm_newsai(r, first_topic, topics)
             if item:
@@ -667,7 +734,7 @@ async def fetch_all_news(
     log.info(
         f"{entity_name}: {raw_count} raw"
         + (f" -> capped to {len(all_articles)}" if MAX_ARTICLES_PER_ENTITY and raw_count > MAX_ARTICLES_PER_ENTITY else "")
-        + f" | {len(TOPIC_CATEGORIES) - len(topic_gaps)}/12 topics hit"
+        + f" | {len(TOPIC_CATEGORIES) - len(topic_gaps)}/{len(TOPIC_CATEGORIES)} topics hit"
         + f" | sources: {','.join(sources)}"
         + (f" | domain filter: {domain}" if domain else "")
         + f" | window: {window['from']} -> {window['to']}"
