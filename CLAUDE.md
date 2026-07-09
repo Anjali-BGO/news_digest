@@ -30,11 +30,16 @@ news_digest/
 │   ├── hyperlink_validator.py  # 4-layer URL reachability check (client/prospect pipeline)
 │   ├── ai_summarizer.py    # GPT-4o-mini: relevance gate + 2–3 sentence summary + 12-category tagging (client/prospect)
 │   ├── industry_validator.py   # Industry-only AI validation: HTTP check + OpenAI web search + chat categorisation
-│   └── excel_exporter.py   # 5-sheet openpyxl Excel report
+│   ├── excel_exporter.py   # 5-sheet openpyxl Excel report
+│   └── drive_uploader.py   # Uploads full data/export/log copies to shared Google Drive (Team Reports)
+├── scripts/
+│   └── authorize_drive.py  # One-time OAuth login for Team Reports — run manually, never by the app itself
 ├── templates/              # Jinja2 HTML: base, index, digest, industry, gaps, audit, run_history
 ├── static/app.js           # Auto-polls /job-status and reloads page on completion
 ├── requirements.txt
 ├── .env                    # API keys — never committed
+├── credentials.json        # Google OAuth client secret for Team Reports — never committed
+├── token.json              # Google OAuth token for Team Reports — never committed
 └── sample_upload.csv       # Example CSV format for bulk entity import
 ```
 
@@ -167,6 +172,25 @@ All persistence is flat JSON files auto-created on first run:
 
 All JSON files are gitignored. Safe to delete to reset data.
 
+### Team Reports (shared Google Drive)
+
+Every team member runs their own local copy of this app — there is no shared server or shared drive, so each person's JSON files above are entirely separate. To give the whole team (including new members) visibility into everyone's full results, the app uploads complete, untrimmed copies of its data files, generated Excel exports, and technical logs to one shared Google account's Drive via the Drive API (`services/drive_uploader.py`). Nothing is summarized or trimmed — full article content, full audit trail, everything stays in.
+
+- **Data folder** (`GOOGLE_DRIVE_DATA_FOLDER_ID`): after every pipeline run, full copies of `data.json`, `audit.json`, `gap_report.json`, `run_history.json`, `error_log.json`, `industry_all_records.json`, `industry_accepted.json`, `industry_rejected.json` are uploaded, each named `<file>_<TEAM_MEMBER_ID>.json` so they never collide with a teammate's own upload. Re-uploaded in place (update, not a new file) each run via `upsert_bytes`.
+- **Exports folder** (`GOOGLE_DRIVE_EXPORTS_FOLDER_ID`): every generated Excel export (`/export/*` routes) is also uploaded, in addition to the normal browser download, queued via `BackgroundTasks` so it never delays the user's download.
+- **Logs folder** (`GOOGLE_DRIVE_LOGS_FOLDER_ID`): full copies of `logs/app.log`, `errors.log`, `pipeline.log`, `audit.log`, named `<TEAM_MEMBER_ID>_<file>.log`, refreshed once per pipeline run.
+
+**Why per-person files instead of one shared file:** Drive has no cross-process file locking. If every teammate's app wrote into the *same* shared `data.json`, concurrent writes could silently overwrite each other. Keeping each person's full files under their own name means nobody's upload ever collides — full detail, zero merge risk.
+
+**One-time setup** (done once by whoever administers the shared Google account):
+1. Enable the Drive API in Google Cloud Console for a project under that account.
+2. Configure the OAuth consent screen (External, scope `drive.file`, publishing status **"In production"** — leaving it in "Testing" auto-expires tokens every 7 days).
+3. Create an OAuth 2.0 Client ID (Desktop app type), download as `credentials.json` in the project root.
+4. Create the three Drive folders above and copy each folder's ID from its URL into `.env`.
+5. Run `python scripts/authorize_drive.py` — opens a browser, log into the shared account, produces `token.json`.
+
+`credentials.json` and `token.json` are secrets tied to the shared account — both are gitignored, never commit them. Each teammate either runs step 5 themselves (logged into the shared account) or receives a copy of `token.json` via a secure channel. If any `GOOGLE_DRIVE_*_FOLDER_ID` is left unset, uploads for that category are skipped with a one-time warning — no crash, lets rollout happen incrementally.
+
 ---
 
 ## Environment Variables (.env)
@@ -187,6 +211,12 @@ All JSON files are gitignored. Safe to delete to reset data.
 | `NEWSDATA_INDUSTRY_MAX_RESULTS` | No | NewsData articles per industry entity (default 20) |
 | `NEWSAI_INDUSTRY_MAX_RESULTS` | No | NewsAPI.ai articles per industry entity (default 20) |
 | `MAX_ARTICLES_PER_ENTITY` | No | Hard cap before dedup/validation; `0` = no cap |
+| `GOOGLE_DRIVE_CREDENTIALS_PATH` | No | OAuth client secret file for Team Reports (default `credentials.json`) |
+| `GOOGLE_DRIVE_TOKEN_PATH` | No | OAuth token file for Team Reports, produced by `scripts/authorize_drive.py` (default `token.json`) |
+| `GOOGLE_DRIVE_DATA_FOLDER_ID` | No | Drive folder ID for full per-person JSON state uploads |
+| `GOOGLE_DRIVE_EXPORTS_FOLDER_ID` | No | Drive folder ID for archived Excel exports |
+| `GOOGLE_DRIVE_LOGS_FOLDER_ID` | No | Drive folder ID for per-person technical log uploads |
+| `TEAM_MEMBER_ID` | No | Your name/id — namespaces your Team Reports uploads so they don't collide with a teammate's |
 
 ---
 

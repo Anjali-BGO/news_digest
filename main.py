@@ -21,8 +21,11 @@ save_run, log_error, get_run_history, append_audit,
 save_raw_articles, list_raw_runs, backfill_audit_entries,
 save_industry_run_records, get_industry_all_records, save_industry_all_records,
 save_industry_accepted, save_industry_rejected, update_industry_validation_status,
+DATA_FILE, AUDIT_FILE, GAP_FILE, RUN_FILE, ERROR_FILE,
+INDUSTRY_ALL_RECORDS_FILE, INDUSTRY_ACCEPTED_FILE, INDUSTRY_REJECTED_FILE,
 )
-from logger import get_logger, get_pipeline_logger
+from services.drive_uploader import upload_bytes, upsert_bytes, startup_check as drive_startup_check
+from logger import get_logger, get_pipeline_logger, LOG_DIR
 
 log = get_logger("main")
 pipe_log = get_pipeline_logger()
@@ -30,6 +33,13 @@ pipe_log = get_pipeline_logger()
 app = FastAPI(title="News Digest Platform")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
+
+
+@app.on_event("startup")
+async def _check_drive_on_startup():
+    # Surfaces Drive token status (ready / disabled + why) in the logs immediately,
+    # instead of only finding out on the first pipeline run or export.
+    drive_startup_check()
 
 # ── Source display name mapping ────────────────────────────────────────────────
 _SOURCE_MAP: dict = {
@@ -157,6 +167,35 @@ def _reason_badge_style(label: str) -> str:
 
 templates.env.globals["standardize_reason"]   = _standardize_reason
 templates.env.globals["reason_badge_style"]   = _reason_badge_style
+
+
+# ── Shared Drive publishing (Team Reports) ──────────────────────────────────────
+_DATA_FILES_TO_PUBLISH = [
+    DATA_FILE, AUDIT_FILE, GAP_FILE, RUN_FILE, ERROR_FILE,
+    INDUSTRY_ALL_RECORDS_FILE, INDUSTRY_ACCEPTED_FILE, INDUSTRY_REJECTED_FILE,
+]
+_LOG_FILES_TO_PUBLISH = ["app.log", "errors.log", "pipeline.log", "audit.log"]
+
+
+def _publish_run_to_drive() -> None:
+    """
+    Upload full, untrimmed copies of this machine's data files and technical
+    logs to the shared Google account's Drive, namespaced by TEAM_MEMBER_ID so
+    they never collide with a teammate's own upload. No-ops (with a one-time
+    warning) if GOOGLE_DRIVE_*_FOLDER_ID / TEAM_MEMBER_ID aren't configured.
+    """
+    member = os.getenv("TEAM_MEMBER_ID", "unknown")
+    data_folder = os.getenv("GOOGLE_DRIVE_DATA_FOLDER_ID", "")
+    logs_folder = os.getenv("GOOGLE_DRIVE_LOGS_FOLDER_ID", "")
+
+    for path in _DATA_FILES_TO_PUBLISH:
+        if path.exists():
+            upsert_bytes(f"{path.stem}_{member}{path.suffix}", path.read_bytes(), "application/json", data_folder)
+
+    for log_file in _LOG_FILES_TO_PUBLISH:
+        path = LOG_DIR / log_file
+        if path.exists():
+            upsert_bytes(f"{member}_{log_file}", path.read_bytes(), "text/plain", logs_folder)
 
 # ── In-memory job status ───────────────────────────────────────────────────────
 job_status: dict = {
@@ -803,10 +842,13 @@ async def clear_job_message_route():
 
     # ── Separate report exports ────────────────────────────────────────────────
 @app.get("/export/gap-report")
-async def export_gap_report():
+async def export_gap_report(background_tasks: BackgroundTasks):
     from services.excel_exporter import generate_gap_report_excel
     excel_bytes = generate_gap_report_excel(get_all_gap_reports(), get_run_history())
     fname = f"gap_report_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    background_tasks.add_task(upload_bytes, fname, excel_bytes,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        os.getenv("GOOGLE_DRIVE_EXPORTS_FOLDER_ID", ""))
     return StreamingResponse(
         io.BytesIO(excel_bytes),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -814,10 +856,13 @@ async def export_gap_report():
     )
 
 @app.get("/export/run-report")
-async def export_run_report():
+async def export_run_report(background_tasks: BackgroundTasks):
     from services.excel_exporter import generate_run_history_excel
     excel_bytes = generate_run_history_excel(get_run_history())
     fname = f"run_history_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    background_tasks.add_task(upload_bytes, fname, excel_bytes,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        os.getenv("GOOGLE_DRIVE_EXPORTS_FOLDER_ID", ""))
     return StreamingResponse(
         io.BytesIO(excel_bytes),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -825,10 +870,13 @@ async def export_run_report():
     )
 
 @app.get("/export/audit-report")
-async def export_audit_report():
+async def export_audit_report(background_tasks: BackgroundTasks):
     from services.excel_exporter import generate_audit_report_excel
     excel_bytes = generate_audit_report_excel(get_audit_log())
     fname = f"audit_report_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    background_tasks.add_task(upload_bytes, fname, excel_bytes,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        os.getenv("GOOGLE_DRIVE_EXPORTS_FOLDER_ID", ""))
     return StreamingResponse(
         io.BytesIO(excel_bytes),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -836,13 +884,16 @@ async def export_audit_report():
     )
 
 @app.get("/export/validation-report")
-async def export_validation_report():
+async def export_validation_report(background_tasks: BackgroundTasks):
     from services.excel_exporter import generate_validation_report_excel
     entities = get_entities()
     all_news = get_all_news()
     audit    = get_audit_log()
     excel_bytes = generate_validation_report_excel(entities, all_news, audit)
     fname = f"validation_report_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    background_tasks.add_task(upload_bytes, fname, excel_bytes,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        os.getenv("GOOGLE_DRIVE_EXPORTS_FOLDER_ID", ""))
     return StreamingResponse(
         io.BytesIO(excel_bytes),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1102,7 +1153,7 @@ async def _run_fix_dates() -> None:
 
     # ── Excel export ───────────────────────────────────────────────────────────────
 @app.get("/export/excel")
-async def export_excel(period: str = ""):
+async def export_excel(background_tasks: BackgroundTasks, period: str = ""):
     from services.excel_exporter import generate_excel_report
 
     entities = get_entities()
@@ -1120,6 +1171,9 @@ async def export_excel(period: str = ""):
    entities=entities,
 )
     fname = f"news_digest_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    background_tasks.add_task(upload_bytes, fname, excel_bytes,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        os.getenv("GOOGLE_DRIVE_EXPORTS_FOLDER_ID", ""))
     return StreamingResponse(
    io.BytesIO(excel_bytes),
    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1129,7 +1183,7 @@ async def export_excel(period: str = ""):
 
     # ── Full analytics export (all articles + audit trail) ────────────────────────
 @app.get("/export/excel-full")
-async def export_excel_full():
+async def export_excel_full(background_tasks: BackgroundTasks):
     from services.excel_exporter import generate_full_analytics_report
 
     entities  = get_entities()
@@ -1139,6 +1193,9 @@ async def export_excel_full():
 
     excel_bytes = generate_full_analytics_report(entities, all_news, audit, window=window)
     fname = f"news_full_analytics_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    background_tasks.add_task(upload_bytes, fname, excel_bytes,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        os.getenv("GOOGLE_DRIVE_EXPORTS_FOLDER_ID", ""))
     return StreamingResponse(
    io.BytesIO(excel_bytes),
    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1741,6 +1798,8 @@ f"{a.get('title','')[:80]} | {a.get('url','')}"
    "exhausted_sources": sorted(exhausted_sources),
 })
 
+    _publish_run_to_drive()
+
     was_cancelled = job_status["cancel"]   # capture before clearing
     exhausted_msg = (
         f" | credits exhausted: {', '.join(sorted(exhausted_sources))}"
@@ -1992,6 +2051,8 @@ f"{a.get('title','')[:80]}"
         save_gap_report(_gap_e)
     except Exception as _e:
         log_error("save_gap_report_entity", str(_e))
+
+    _publish_run_to_drive()
 
     industry_msg = (
         f" | industry: {industry_validation['validated']} validated / "

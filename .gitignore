@@ -15,3 +15,5 @@ __pycache__/
 *.pyc
 pipeline_snapshots/
 raw_news/
+credentials.json
+token.json
