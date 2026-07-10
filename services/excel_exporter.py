@@ -108,6 +108,40 @@ def _parse_date(date_str: str):
         return "", "", date_str
 
 
+# ── Per-period serial numbering ("News ID") ─────────────────────────────────────
+def _period_label_from_window(window_from: str, window_to: str) -> str:
+    """
+    Builds the same 'DD Mon YYYY – DD Mon YYYY' label used everywhere else
+    (see news_fetcher.resolve_window) from raw ISO window_from/window_to.
+    Audit-log rows only carry the raw ISO dates, while NewsItem rows carry the
+    pre-formatted label — normalising both to this format lets a News ID
+    counter be shared across accepted + rejected/duplicate rows for the same
+    real run period (used by the Full Analytics / Audit / Validation reports).
+    """
+    try:
+        f = datetime.strptime(window_from[:10], "%Y-%m-%d").strftime("%d %b %Y")
+        t = datetime.strptime(window_to[:10],   "%Y-%m-%d").strftime("%d %b %Y")
+        return f"{f} – {t}"
+    except Exception:
+        return window_from or window_to or "Unknown Period"
+
+
+def _next_news_id(counters: dict, period_key: str) -> int:
+    """Serial number that restarts at 1 for every distinct run period."""
+    key = period_key or "Unknown Period"
+    counters[key] = counters.get(key, 0) + 1
+    return counters[key]
+
+
+def _serial_cell(ws, row: int, col: int, value, fill: PatternFill):
+    c = ws.cell(row=row, column=col, value=value)
+    c.fill      = fill
+    c.border    = _border()
+    c.font      = _font(bold=True, size=10)
+    c.alignment = _center()
+    return c
+
+
 # ── Summary sheet ──────────────────────────────────────────────────────────────
 def _build_summary(wb, client_data, prospect_data,
                    industry_data, window: dict | None):
@@ -177,36 +211,39 @@ def _build_client_sheet(wb, client_data: List[Dict], window: dict | None):
     """
     ws      = wb.create_sheet("Client Report")
     headers = [
-        "Company Name", "News Article Header",
+        "News ID", "Company Name", "News Article Header",
         "News Article Details (with Insights)",
         "Source", "Date", "Month", "Primary Category",
         "Fetch Date", "Period", "Fetch API",
         "Hyperlink", "Client/Prospect",
     ]
     ncols = _sheet_header(ws, "Client News Report", headers, window, BLUE_DARK, BLUE_MID)
-    _set_widths(ws, [24, 36, 55, 20, 14, 14, 26, 14, 26, 12, 14, 16])
+    _set_widths(ws, [9, 24, 36, 55, 20, 14, 14, 26, 14, 26, 12, 14, 16])
 
     row = 4
+    news_id_counters: dict = {}
     for item in client_data:
         entity = item["entity"]
         for idx, n in enumerate(item["news"]):
             month, _, date_fmt = _parse_date(n.published_date)
             fill = _fill(BLUE_LIGHT) if idx % 2 == 0 else _fill(WHITE)
 
-            _data_cell(ws, row,  1, entity.name,                     fill)
-            _data_cell(ws, row,  2, n.title,                         fill)
-            _data_cell(ws, row,  3, n.summary or n.title,            fill)
-            _data_cell(ws, row,  4, n.source,                        fill)
-            _data_cell(ws, row,  5, date_fmt,                        fill)
-            _data_cell(ws, row,  6, month,                           fill)
-            _data_cell(ws, row,  7, n.primary_category or "",        fill)
-            _data_cell(ws, row,  8, n.fetched_date or "",            fill)
-            _data_cell(ws, row,  9, n.period or "",                  fill)
-            _data_cell(ws, row, 10, n.fetch_source or "",            fill)
+            serial = _next_news_id(news_id_counters, n.period)
+            _serial_cell(ws, row,  1, serial,                        fill)
+            _data_cell(ws, row,  2, entity.name,                     fill)
+            _data_cell(ws, row,  3, n.title,                         fill)
+            _data_cell(ws, row,  4, n.summary or n.title,            fill)
+            _data_cell(ws, row,  5, n.source,                        fill)
+            _data_cell(ws, row,  6, date_fmt,                        fill)
+            _data_cell(ws, row,  7, month,                           fill)
+            _data_cell(ws, row,  8, n.primary_category or "",        fill)
+            _data_cell(ws, row,  9, n.fetched_date or "",            fill)
+            _data_cell(ws, row, 10, n.period or "",                  fill)
+            _data_cell(ws, row, 11, n.fetch_source or "",            fill)
             link_label = "⚠ View Article" if n.paywall_note else "View Article"
-            _data_cell(ws, row, 11, link_label,                      fill,
+            _data_cell(ws, row, 12, link_label,                      fill,
                        hyperlink=n.url or n.original_url)
-            _data_cell(ws, row, 12, "Client",                        fill)
+            _data_cell(ws, row, 13, "Client",                        fill)
 
             ws.row_dimensions[row].height = ARTICLE_ROW_HEIGHT
             row += 1
@@ -224,34 +261,37 @@ def _build_prospect_sheet(wb, prospect_data: List[Dict], window: dict | None):
     """
     ws      = wb.create_sheet("Prospect Report")
     headers = [
-        "Company", "News Article Header", "News Article Details",
+        "News ID", "Company", "News Article Header", "News Article Details",
         "Source", "Month, Year", "Date", "Primary Category",
         "Fetch Date", "Period", "Fetch API",
         "News HyperLink", "Client/Prospect",
     ]
     ncols = _sheet_header(ws, "Prospect News Report", headers, window, GREEN_DARK, GREEN_MID)
-    _set_widths(ws, [24, 36, 55, 20, 16, 14, 26, 14, 26, 12, 14, 16])
+    _set_widths(ws, [9, 24, 36, 55, 20, 16, 14, 26, 14, 26, 12, 14, 16])
 
     row = 4
+    news_id_counters: dict = {}
     for item in prospect_data:
         entity = item["entity"]
         for idx, n in enumerate(item["news"]):
             month, month_year, date_fmt = _parse_date(n.published_date)
             fill = _fill(GREEN_LIGHT) if idx % 2 == 0 else _fill(WHITE)
 
-            _data_cell(ws, row,  1, entity.name,                  fill)
-            _data_cell(ws, row,  2, n.title,                      fill)
-            _data_cell(ws, row,  3, n.summary or n.title,         fill)
-            _data_cell(ws, row,  4, n.source,                     fill)
-            _data_cell(ws, row,  5, month_year,                   fill)
-            _data_cell(ws, row,  6, date_fmt,                     fill)
-            _data_cell(ws, row,  7, n.primary_category or "",     fill)
-            _data_cell(ws, row,  8, n.fetched_date or "",         fill)
-            _data_cell(ws, row,  9, n.period or "",               fill)
-            _data_cell(ws, row, 10, n.fetch_source or "",         fill)
-            _data_cell(ws, row, 11, "View Article",               fill,
+            serial = _next_news_id(news_id_counters, n.period)
+            _serial_cell(ws, row,  1, serial,                    fill)
+            _data_cell(ws, row,  2, entity.name,                  fill)
+            _data_cell(ws, row,  3, n.title,                      fill)
+            _data_cell(ws, row,  4, n.summary or n.title,         fill)
+            _data_cell(ws, row,  5, n.source,                     fill)
+            _data_cell(ws, row,  6, month_year,                   fill)
+            _data_cell(ws, row,  7, date_fmt,                     fill)
+            _data_cell(ws, row,  8, n.primary_category or "",     fill)
+            _data_cell(ws, row,  9, n.fetched_date or "",         fill)
+            _data_cell(ws, row, 10, n.period or "",               fill)
+            _data_cell(ws, row, 11, n.fetch_source or "",         fill)
+            _data_cell(ws, row, 12, "View Article",               fill,
                        hyperlink=n.url or n.original_url)
-            _data_cell(ws, row, 12, "Prospect",                   fill)
+            _data_cell(ws, row, 13, "Prospect",                   fill)
 
             ws.row_dimensions[row].height = ARTICLE_ROW_HEIGHT
             row += 1
@@ -269,7 +309,7 @@ def _build_industry_sheet(wb, industry_data: List[Dict], window: dict | None):
     """
     ws      = wb.create_sheet("Industry News")
     headers = [
-        "Industry",
+        "News ID", "Industry",
         "Primary Category", "Secondary Category",
         "News Article Header",
         "News Article Details (with Insights)",
@@ -278,27 +318,30 @@ def _build_industry_sheet(wb, industry_data: List[Dict], window: dict | None):
         "Hyperlink",
     ]
     ncols = _sheet_header(ws, "Industry News Report", headers, window, PURPLE_DARK, PURPLE_MID)
-    _set_widths(ws, [22, 30, 28, 36, 55, 20, 14, 14, 14, 26, 12, 14])
+    _set_widths(ws, [9, 22, 30, 28, 36, 55, 20, 14, 14, 14, 26, 12, 14])
 
     row = 4
+    news_id_counters: dict = {}
     for item in industry_data:
         entity = item["entity"]
         for idx, n in enumerate(item["news"]):
             month, _, date_fmt = _parse_date(n.published_date)
             fill = _fill(PURPLE_LIGHT) if idx % 2 == 0 else _fill(WHITE)
 
-            _data_cell(ws, row,  1, entity.name,                        fill)
-            _data_cell(ws, row,  2, n.primary_category or "General",    fill)
-            _data_cell(ws, row,  3, n.secondary_category or "",         fill)
-            _data_cell(ws, row,  4, n.title,                            fill)
-            _data_cell(ws, row,  5, n.summary or n.title,               fill)
-            _data_cell(ws, row,  6, n.source,                           fill)
-            _data_cell(ws, row,  7, date_fmt,                           fill)
-            _data_cell(ws, row,  8, month,                              fill)
-            _data_cell(ws, row,  9, n.fetched_date or "",               fill)
-            _data_cell(ws, row, 10, n.period or "",                     fill)
-            _data_cell(ws, row, 11, n.fetch_source or "",               fill)
-            _data_cell(ws, row, 12, "View Article",                     fill,
+            serial = _next_news_id(news_id_counters, n.period)
+            _serial_cell(ws, row,  1, serial,                           fill)
+            _data_cell(ws, row,  2, entity.name,                        fill)
+            _data_cell(ws, row,  3, n.primary_category or "General",    fill)
+            _data_cell(ws, row,  4, n.secondary_category or "",         fill)
+            _data_cell(ws, row,  5, n.title,                            fill)
+            _data_cell(ws, row,  6, n.summary or n.title,               fill)
+            _data_cell(ws, row,  7, n.source,                           fill)
+            _data_cell(ws, row,  8, date_fmt,                           fill)
+            _data_cell(ws, row,  9, month,                              fill)
+            _data_cell(ws, row, 10, n.fetched_date or "",               fill)
+            _data_cell(ws, row, 11, n.period or "",                     fill)
+            _data_cell(ws, row, 12, n.fetch_source or "",               fill)
+            _data_cell(ws, row, 13, "View Article",                     fill,
                        hyperlink=n.url or n.original_url)
 
             ws.row_dimensions[row].height = ARTICLE_ROW_HEIGHT
@@ -384,7 +427,7 @@ def _build_full_analytics(wb, entities_map: dict, all_news: dict,
 
     ws      = wb.create_sheet("Full Analytics")
     headers = [
-        "Entity Name", "Entity Type", "Status", "Reason / Note",
+        "News ID", "Entity Name", "Entity Type", "Status", "Reason / Note",
         "Article Title", "Source", "URL",
         "Published Date", "Period",
         "Primary Category", "Secondary Category",
@@ -404,9 +447,13 @@ def _build_full_analytics(wb, entities_map: dict, all_news: dict,
     c.alignment = _center()
 
     _header_row(ws, headers, row=3, bg=GRAY_DARK)
-    _set_widths(ws, [22, 12, 14, 40, 44, 20, 14, 14, 28, 30, 28, 28, 14])
+    _set_widths(ws, [9, 22, 12, 14, 40, 44, 20, 14, 14, 28, 30, 28, 28, 14])
 
     row = 4
+    # Shared across accepted + rejected/duplicate loops below, keyed by the
+    # normalised period label, so News ID counts every article for a given
+    # run period (accepted and non-accepted alike) as one continuous 1..N run.
+    news_id_counters: dict = {}
 
     # ── Accepted articles from news data ──────────────────────────────────────
     for eid, items in all_news.items():
@@ -415,23 +462,25 @@ def _build_full_analytics(wb, entities_map: dict, all_news: dict,
         entity_type = entity.entity_type.value if entity else "unknown"
         for idx, n in enumerate(items):
             fill = _fill(GREEN_LIGHT2) if idx % 2 == 0 else _fill(WHITE)
-            _data_cell(ws, row, 1,  entity_name,             fill)
-            _data_cell(ws, row, 2,  entity_type.capitalize(), fill)
-            c = ws.cell(row=row, column=3, value="Accepted")
+            serial = _next_news_id(news_id_counters, n.period)
+            _serial_cell(ws, row, 1,  serial,                 fill)
+            _data_cell(ws, row, 2,  entity_name,             fill)
+            _data_cell(ws, row, 3,  entity_type.capitalize(), fill)
+            c = ws.cell(row=row, column=4, value="Accepted")
             c.font      = _font(bold=True, size=10, color=GREEN_MID2)
             c.fill      = fill
             c.border    = _border()
             c.alignment = _align()
-            _data_cell(ws, row, 4,  "Passed all checks",     fill)
-            _data_cell(ws, row, 5,  n.title,                 fill)
-            _data_cell(ws, row, 6,  n.source,                fill)
-            _data_cell(ws, row, 7,  "View",                  fill, hyperlink=n.url or n.original_url)
-            _data_cell(ws, row, 8,  n.published_date,        fill)
-            _data_cell(ws, row, 9,  n.period,                fill)
-            _data_cell(ws, row, 10, n.primary_category,      fill)
-            _data_cell(ws, row, 11, n.secondary_category or "", fill)
-            _data_cell(ws, row, 12, n.topic_queried or "",   fill)
-            _data_cell(ws, row, 13, n.fetch_source or "",    fill)
+            _data_cell(ws, row, 5,  "Passed all checks",     fill)
+            _data_cell(ws, row, 6,  n.title,                 fill)
+            _data_cell(ws, row, 7,  n.source,                fill)
+            _data_cell(ws, row, 8,  "View",                  fill, hyperlink=n.url or n.original_url)
+            _data_cell(ws, row, 9,  n.published_date,        fill)
+            _data_cell(ws, row, 10, n.period,                fill)
+            _data_cell(ws, row, 11, n.primary_category,      fill)
+            _data_cell(ws, row, 12, n.secondary_category or "", fill)
+            _data_cell(ws, row, 13, n.topic_queried or "",   fill)
+            _data_cell(ws, row, 14, n.fetch_source or "",    fill)
             ws.row_dimensions[row].height = 40
             row += 1
 
@@ -458,26 +507,28 @@ def _build_full_analytics(wb, entities_map: dict, all_news: dict,
 
         win_period = ""
         if getattr(entry, "window_from", "") and getattr(entry, "window_to", ""):
-            win_period = f"{entry.window_from} → {entry.window_to}"
+            win_period = _period_label_from_window(entry.window_from, entry.window_to)
 
-        _data_cell(ws, row, 1,  entry.entity_name,            fill)
-        _data_cell(ws, row, 2,  entity_type,                   fill)
-        c = ws.cell(row=row, column=3, value=status)
+        serial = _next_news_id(news_id_counters, win_period)
+        _serial_cell(ws, row, 1,  serial,                     fill)
+        _data_cell(ws, row, 2,  entry.entity_name,            fill)
+        _data_cell(ws, row, 3,  entity_type,                   fill)
+        c = ws.cell(row=row, column=4, value=status)
         c.font      = _font(bold=True, size=10, color=s_color)
         c.fill      = fill
         c.border    = _border()
         c.alignment = _align()
-        _data_cell(ws, row, 4,  entry.reason,                  fill)
-        _data_cell(ws, row, 5,  entry.article_title,           fill)
-        _data_cell(ws, row, 6,  "",                            fill)  # publication source not in audit log
-        _data_cell(ws, row, 7,  "View" if entry.source_url else "", fill,
+        _data_cell(ws, row, 5,  entry.reason,                  fill)
+        _data_cell(ws, row, 6,  entry.article_title,           fill)
+        _data_cell(ws, row, 7,  "",                            fill)  # publication source not in audit log
+        _data_cell(ws, row, 8,  "View" if entry.source_url else "", fill,
                    hyperlink=entry.source_url or None)
-        _data_cell(ws, row, 8,  entry.run_date,                fill)
-        _data_cell(ws, row, 9,  win_period,                    fill)
-        _data_cell(ws, row, 10, "",                            fill)
+        _data_cell(ws, row, 9,  entry.run_date,                fill)
+        _data_cell(ws, row, 10, win_period,                    fill)
         _data_cell(ws, row, 11, "",                            fill)
         _data_cell(ws, row, 12, "",                            fill)
-        _data_cell(ws, row, 13, entry.fetch_source or "",      fill)
+        _data_cell(ws, row, 13, "",                            fill)
+        _data_cell(ws, row, 14, entry.fetch_source or "",      fill)
         ws.row_dimensions[row].height = 40
         row += 1
 
@@ -734,7 +785,8 @@ def generate_run_history_excel(runs: list) -> bytes:
         acc_pct  = round(accepted / raw * 100, 1) if raw else 0
         val_acc  = round(accepted / after_dd * 100, 1) if after_dd else 0
         tokens   = (r.get("prompt_tokens", 0) or 0) + (r.get("completion_tokens", 0) or 0)
-        period   = f"{r.get('window_from', '')} → {r.get('window_to', '')}" if r.get("window_from") else r.get("window_label", "")
+        period   = (_period_label_from_window(r.get("window_from", ""), r.get("window_to", ""))
+                    if r.get("window_from") and r.get("window_to") else r.get("window_label", ""))
         apis     = ", ".join(r.get("api_sources_used", []))
         scope    = r.get("entity_name", f"All ({r.get('total_entities', '')})")
         fill     = _fill(GRAY_LIGHT) if idx % 2 == 0 else _fill(WHITE)
@@ -770,9 +822,9 @@ def generate_audit_report_excel(audit_entries: list) -> bytes:
     if active:
         wb.remove(active)
 
-    common_hdrs = ["Run Date", "Period", "Entity Name", "Entity Type",
+    common_hdrs = ["News ID", "Run Date", "Period", "Entity Name", "Entity Type",
                    "Action", "Std. Reason", "API Source", "Article Title", "Reason Detail", "Source URL"]
-    cwidths = [12, 26, 24, 14, 16, 24, 12, 44, 44, 16]
+    cwidths = [9, 12, 26, 24, 14, 16, 24, 12, 44, 44, 16]
 
     def _write_sheet(ws, title: str, entries, bg_dark, bg_mid, row_fill_even, row_fill_odd):
         ncols = len(common_hdrs)
@@ -784,17 +836,21 @@ def generate_audit_report_excel(audit_entries: list) -> bytes:
         _header_row(ws, common_hdrs, row=3, bg=bg_mid)
         _set_widths(ws, cwidths)
         ws.freeze_panes = "A4"
+        news_id_counters: dict = {}
         for idx, e in enumerate(entries):
-            period = (f"{e.window_from} → {e.window_to}" if getattr(e, "window_from", "") and getattr(e, "window_to", "") else "")
+            period = (_period_label_from_window(e.window_from, e.window_to)
+                      if getattr(e, "window_from", "") and getattr(e, "window_to", "") else "")
             std    = _standardize_reason_xl(e.action, e.reason)
             fill   = _fill(row_fill_even) if idx % 2 == 0 else _fill(row_fill_odd)
             row    = idx + 4
+            serial = _next_news_id(news_id_counters, period)
+            _serial_cell(ws, row, 1, serial, fill)
             for ci, val in enumerate([
                 e.run_date, period, e.entity_name,
                 (e.entity_type or "").title(), e.action.replace("_", " ").title(),
                 std, e.fetch_source or "", e.article_title,
                 e.reason, e.source_url or "",
-            ], 1):
+            ], 2):
                 _data_cell(ws, row, ci, val, fill)
             ws.row_dimensions[row].height = 32
         _copyright_row(ws, len(common_hdrs), len(entries) + 5)
@@ -886,7 +942,7 @@ def generate_validation_report_excel(entities: list, all_news: dict, audit_entri
 
     # ── Sheet 2: Accepted Articles ────────────────────────────────────────────
     ws2 = wb.create_sheet("Accepted Articles")
-    hdrs2 = ["Entity Name", "Entity Type", "Article Title", "Source", "Published",
+    hdrs2 = ["News ID", "Entity Name", "Entity Type", "Article Title", "Source", "Published",
              "Period", "URL Status", "Fetch API", "Primary Category", "URL"]
     _title_row(ws2, "Validation Report — Accepted Articles", len(hdrs2), GREEN_DARK)
     ws2.merge_cells(start_row=2, start_column=1, end_row=2, end_column=len(hdrs2))
@@ -894,21 +950,24 @@ def generate_validation_report_excel(entities: list, all_news: dict, audit_entri
                    value=f"Accepted articles include url_status=ok, redirect, unknown, and paywall-tagged articles.")
     c2b.font = _font(size=10, color=WHITE); c2b.fill = _fill(GREEN_MID); c2b.alignment = _center()
     _header_row(ws2, hdrs2, row=3, bg=GREEN_MID)
-    _set_widths(ws2, [24, 14, 44, 20, 14, 20, 14, 14, 30, 14])
+    _set_widths(ws2, [9, 24, 14, 44, 20, 14, 20, 14, 14, 30, 14])
     ws2.freeze_panes = "A4"
     row2 = 4
+    news_id_counters2: dict = {}
     for eid, items in all_news.items():
         entity = entities_map.get(eid)
         ename  = entity.name if entity else eid
         etype  = entity.entity_type.value if entity else "unknown"
         for nidx, n in enumerate(items):
             fill = _fill(GRN_LIGHT) if nidx % 2 == 0 else _fill(WHITE)
+            serial = _next_news_id(news_id_counters2, n.period)
+            _serial_cell(ws2, row2, 1, serial, fill)
             for ci, val in enumerate([
                 ename, etype.title(), n.title, n.source, n.published_date,
                 n.period, n.url_status or "ok", n.fetch_source or "",
                 n.primary_category or "", "",
-            ], 1):
-                if ci == 10:
+            ], 2):
+                if ci == 11:
                     _data_cell(ws2, row2, ci, "View", fill, hyperlink=n.url or n.original_url)
                 else:
                     _data_cell(ws2, row2, ci, val, fill)
@@ -918,7 +977,7 @@ def generate_validation_report_excel(entities: list, all_news: dict, audit_entri
 
     # ── Sheet 3: Rejected Articles ────────────────────────────────────────────
     ws3 = wb.create_sheet("Rejected Articles")
-    hdrs3 = ["Run Date", "Entity Name", "Entity Type", "Action",
+    hdrs3 = ["News ID", "Run Date", "Entity Name", "Entity Type", "Action",
              "Standardized Reason", "API Source", "Article Title", "Reason Detail", "URL"]
     _title_row(ws3, "Validation Report — Rejected Articles", len(hdrs3), RED_MID)
     ws3.merge_cells(start_row=2, start_column=1, end_row=2, end_column=len(hdrs3))
@@ -926,18 +985,23 @@ def generate_validation_report_excel(entities: list, all_news: dict, audit_entri
                    value=f"Rejected articles: duplicates + validation failures + invalid hyperlinks.")
     c3b.font = _font(size=10, color=WHITE); c3b.fill = _fill(RED_MID); c3b.alignment = _center()
     _header_row(ws3, hdrs3, row=3, bg=RED_MID)
-    _set_widths(ws3, [12, 24, 14, 18, 26, 12, 44, 44, 14])
+    _set_widths(ws3, [9, 12, 24, 14, 18, 26, 12, 44, 44, 14])
     ws3.freeze_panes = "A4"
     row3 = 4
+    news_id_counters3: dict = {}
     for nidx, e in enumerate(non_accepted):
         fill = _fill(RED_LIGHT) if nidx % 2 == 0 else _fill(WHITE)
         std  = _standardize_reason_xl(e.action, e.reason)
+        period3 = (_period_label_from_window(e.window_from, e.window_to)
+                   if getattr(e, "window_from", "") and getattr(e, "window_to", "") else "")
+        serial  = _next_news_id(news_id_counters3, period3)
+        _serial_cell(ws3, row3, 1, serial, fill)
         for ci, val in enumerate([
             e.run_date, e.entity_name, (e.entity_type or "").title(),
             e.action.replace("_", " ").title(), std,
             e.fetch_source or "", e.article_title, e.reason, "",
-        ], 1):
-            if ci == 9:
+        ], 2):
+            if ci == 10:
                 _data_cell(ws3, row3, ci, "View" if e.source_url else "", fill,
                            hyperlink=e.source_url if e.source_url else None)
             else:

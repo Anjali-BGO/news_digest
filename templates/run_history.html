@@ -98,15 +98,15 @@
 
         <!-- Started / completed -->
         <td style="padding:9px 14px;white-space:nowrap">
-          <div style="color:#0F172A;font-size:11px;font-weight:600">{{ r.started_at }}</div>
+          <a href="/run-history/{{ r.run_id }}" style="color:#2563EB;font-size:11px;font-weight:600;text-decoration:none" title="View raw fetch, accepted, rejected & duplicate records for this run">{{ r.started_at }}</a>
           <div style="color:#94A3B8;font-size:10px;margin-top:2px">→ {{ r.completed_at }}</div>
         </td>
 
         <!-- Report period -->
         <td style="padding:9px 14px;white-space:nowrap">
           {% if r.window_from and r.window_to %}
-          <div style="font-size:11px;font-weight:600;color:#1E40AF">{{ r.window_from }}</div>
-          <div style="font-size:10px;color:#94A3B8">→ {{ r.window_to }}</div>
+          <div style="font-size:11px;font-weight:600;color:#1E40AF">{{ r.window_from | pretty_date }}</div>
+          <div style="font-size:10px;color:#94A3B8">→ {{ r.window_to | pretty_date }}</div>
           {% elif r.window_label %}
           <div style="font-size:11px;color:#475569">{{ r.window_label }}</div>
           {% else %}

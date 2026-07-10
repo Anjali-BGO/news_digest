@@ -4,8 +4,8 @@
 {% block page_title %}Audit Log{% endblock %}
 
 {% block topbar_right %}
-{% if total_count > limit %}
-<span style="font-size:11px;color:#D97706;font-weight:600">Showing latest {{ limit }} of {{ total_count }} entries</span>
+{% if total_pages > 1 %}
+<span style="font-size:11px;color:#D97706;font-weight:600">Page {{ page }} of {{ total_pages }} — {{ total_count }} total entries</span>
 {% else %}
 <span style="font-size:11px;color:#94A3B8">{{ total_count }} total entries</span>
 {% endif %}
@@ -128,9 +128,9 @@
 
         <td style="padding:9px 14px;white-space:nowrap;font-size:11px">
           {% if e.window_from and e.window_to %}
-          <span style="color:#1E40AF;font-weight:600">{{ e.window_from }}</span>
+          <span style="color:#1E40AF;font-weight:600">{{ e.window_from | pretty_date }}</span>
           <span style="color:#94A3B8;margin:0 3px">→</span>
-          <span style="color:#1E40AF;font-weight:600">{{ e.window_to }}</span>
+          <span style="color:#1E40AF;font-weight:600">{{ e.window_to | pretty_date }}</span>
           {% else %}<span style="color:#CBD5E1">—</span>{% endif %}
         </td>
 
@@ -197,6 +197,18 @@
     </table>
   </div>
 </div>
+
+{% if total_pages > 1 %}
+<div style="display:flex;justify-content:center;align-items:center;gap:10px;margin-top:12px">
+  {% if page > 1 %}
+  <a href="/audit?tab={{ active_tab }}&page={{ page - 1 }}" style="padding:6px 14px;border-radius:7px;border:0.5px solid #D4DAE8;background:#fff;color:#334155;font-size:12px;font-weight:600;text-decoration:none">← Newer</a>
+  {% endif %}
+  <span style="font-size:12px;color:#64748B">Page {{ page }} of {{ total_pages }}</span>
+  {% if page < total_pages %}
+  <a href="/audit?tab={{ active_tab }}&page={{ page + 1 }}" style="padding:6px 14px;border-radius:7px;border:0.5px solid #D4DAE8;background:#fff;color:#334155;font-size:12px;font-weight:600;text-decoration:none">Older →</a>
+  {% endif %}
+</div>
+{% endif %}
 
 <script>
 function applyAuditFilters() {

@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% from "macros.html" import empty_state, entity_type_badge %}
+{% block title %}Run {{ run.run_id }} — News Digest{% endblock %}
+{% block page_title %}Run Detail{% endblock %}
+
+{% block topbar_right %}
+<a href="/run-history" style="display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:7px;background:#475569;color:#fff;font-size:11px;font-weight:600;text-decoration:none">
+  <i class="ti ti-arrow-left" style="font-size:12px"></i> All Runs
+</a>
+{% endblock %}
+
+{% block content %}
+
+<!-- ── Run summary ─────────────────────────────────────────────────────────────── -->
+<div style="background:#fff;border-radius:10px;border:0.5px solid #D4DAE8;padding:14px 16px;margin-bottom:12px;box-shadow:0 2px 6px rgba(0,0,0,0.05)">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px">
+    <div>
+      <div style="font-size:15px;font-weight:700;color:#0F172A">{{ run.run_id }}</div>
+      <div style="font-size:11px;color:#64748B;margin-top:2px">
+        {{ run.started_at }} → {{ run.completed_at }}
+        {% if run.window_from and run.window_to %} | Period: <strong>{{ run.window_from | pretty_date }} → {{ run.window_to | pretty_date }}</strong>{% endif %}
+      </div>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      {% if run.api_sources_used %}
+      {% for src in run.api_sources_used %}
+      <span style="font-size:10px;background:#F0FDFA;color:#0F766E;padding:2px 8px;border-radius:99px;font-weight:700;border:0.5px solid #99F6E4">{{ src }}</span>
+      {% endfor %}
+      {% endif %}
+      <span style="font-size:10px;background:#F1F5F9;color:#334155;padding:2px 8px;border-radius:99px;font-weight:700">{{ run.entity_name or ("All (" ~ run.total_entities ~ ")") }}</span>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-top:12px">
+    <div style="background:#F8FAFC;border-radius:8px;padding:10px 12px">
+      <div style="font-size:10px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:0.06em">Raw Fetched</div>
+      <div style="font-size:18px;font-weight:800;color:#334155">{{ run.raw_fetched }}</div>
+    </div>
+    <div style="background:#FFF0F6;border-radius:8px;padding:10px 12px">
+      <div style="font-size:10px;font-weight:700;color:#BE185D;text-transform:uppercase;letter-spacing:0.06em">Duplicates</div>
+      <div style="font-size:18px;font-weight:800;color:#BE185D">{{ run.duplicates_removed }}</div>
+    </div>
+    <div style="background:#FFFBEB;border-radius:8px;padding:10px 12px">
+      <div style="font-size:10px;font-weight:700;color:#D97706;text-transform:uppercase;letter-spacing:0.06em">Rejected</div>
+      <div style="font-size:18px;font-weight:800;color:#92400E">{{ run.articles_rejected }}</div>
+    </div>
+    <div style="background:#F0FDF4;border-radius:8px;padding:10px 12px">
+      <div style="font-size:10px;font-weight:700;color:#16A34A;text-transform:uppercase;letter-spacing:0.06em">Accepted</div>
+      <div style="font-size:18px;font-weight:800;color:#14532D">{{ run.total_articles }}</div>
+    </div>
+  </div>
+
+  {% if not has_raw_file %}
+  <div style="margin-top:10px;font-size:11px;color:#B45309;background:#FEF9C3;border-radius:6px;padding:6px 10px">
+    <i class="ti ti-alert-triangle" style="font-size:11px;vertical-align:-1px"></i>
+    No raw_news file found for this run — either it predates this feature, or it was rotated/removed locally (check the Drive data folder for <code>raw_news_{{ run.run_id }}.json</code>).
+  </div>
+  {% endif %}
+  {% if used_fallback_match %}
+  <div style="margin-top:10px;font-size:11px;color:#1E40AF;background:#EFF6FF;border-radius:6px;padding:6px 10px">
+    <i class="ti ti-info-circle" style="font-size:11px;vertical-align:-1px"></i>
+    This run predates per-entry run IDs — audit rows below were matched by run date + exact period instead, so they could include another run's entries if two runs shared the same day and window.
+  </div>
+  {% endif %}
+  {% if not has_snapshots %}
+  <div style="margin-top:10px;font-size:11px;color:#64748B;background:#F8FAFC;border-radius:6px;padding:6px 10px">
+    Per-stage snapshots for this run are not available locally (rotated away, or this run predates the snapshot archive). Raw + audit data above is unaffected.
+  </div>
+  {% endif %}
+</div>
+
+<!-- ── Raw fetch by entity ────────────────────────────────────────────────────── -->
+{% if raw_entities %}
+<div style="background:#fff;border-radius:10px;border:0.5px solid #D4DAE8;padding:12px 16px;margin-bottom:12px;box-shadow:0 2px 6px rgba(0,0,0,0.05)">
+  <div style="font-size:12px;font-weight:700;color:#0F172A;margin-bottom:8px">Raw Fetch by Entity ({{ total_raw_in_file }} articles, before dedup/validation)</div>
+  <div style="display:flex;flex-wrap:wrap;gap:6px">
+    {% for e in raw_entities %}
+    <span style="font-size:11px;background:#F8FAFC;border:0.5px solid #D4DAE8;border-radius:99px;padding:3px 10px">
+      <strong>{{ e.name }}</strong> <span style="color:#94A3B8">({{ e.type }})</span> — {{ e.article_count }}
+    </span>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- ── Article sections ───────────────────────────────────────────────────────── -->
+{% macro article_table(title, numbered_entries, color, bg) %}
+{% if numbered_entries %}
+<div style="background:#fff;border-radius:10px;border:0.5px solid #D4DAE8;overflow:hidden;margin-bottom:12px;box-shadow:0 2px 6px rgba(0,0,0,0.05)">
+  <div style="padding:10px 16px;background:{{ bg }};font-size:12px;font-weight:700;color:{{ color }}">{{ title }} ({{ numbered_entries|length }})</div>
+  <div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead>
+        <tr style="background:#F8FAFC;border-bottom:0.5px solid #D4DAE8">
+          <th style="text-align:right;padding:8px 12px;font-weight:700;font-size:10px;color:#94A3B8;text-transform:uppercase;width:60px">News ID</th>
+          <th style="text-align:left;padding:8px 12px;font-weight:700;font-size:10px;color:#94A3B8;text-transform:uppercase">Entity</th>
+          <th style="text-align:left;padding:8px 12px;font-weight:700;font-size:10px;color:#94A3B8;text-transform:uppercase">Type</th>
+          <th style="text-align:left;padding:8px 12px;font-weight:700;font-size:10px;color:#94A3B8;text-transform:uppercase">Article Title</th>
+          <th style="text-align:left;padding:8px 12px;font-weight:700;font-size:10px;color:#94A3B8;text-transform:uppercase">API</th>
+          <th style="text-align:left;padding:8px 12px;font-weight:700;font-size:10px;color:#94A3B8;text-transform:uppercase">Reason / Note</th>
+          <th style="text-align:left;padding:8px 12px;font-weight:700;font-size:10px;color:#94A3B8;text-transform:uppercase">URL</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for id, e in numbered_entries %}
+        <tr style="border-bottom:0.5px solid #F8FAFC">
+          <td style="padding:8px 12px;text-align:right;color:#94A3B8;font-weight:600">{{ id }}</td>
+          <td style="padding:8px 12px;font-weight:600;color:#0F172A">{{ e.entity_name }}</td>
+          <td style="padding:8px 12px">{{ entity_type_badge(e.entity_type) if e.entity_type else '' }}</td>
+          <td style="padding:8px 12px;color:#334155;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ e.article_title }}">{{ e.article_title }}</td>
+          <td style="padding:8px 12px;color:#64748B;font-size:11px">{{ e.fetch_source or '—' }}</td>
+          <td style="padding:8px 12px;color:#475569;font-size:11px;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ e.reason }}">{{ e.reason }}</td>
+          <td style="padding:8px 12px">
+            {% if e.source_url %}<a href="{{ e.source_url }}" target="_blank" style="color:#2563EB;font-size:11px;text-decoration:none;font-weight:600">Link →</a>{% else %}—{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endmacro %}
+
+{{ article_table("Accepted", accepted, "#166534", "#F0FDF4") }}
+{{ article_table("Duplicate", duplicate, "#B45309", "#FEF9C3") }}
+{{ article_table("Validation Rejected", rejected, "#B91C1C", "#FEE2E2") }}
+{{ article_table("URL Invalid", url_invalid, "#0F766E", "#F0FDFA") }}
+{{ article_table("Other", other, "#475569", "#F8FAFC") }}
+
+{% if not accepted and not duplicate and not rejected and not url_invalid and not other %}
+{{ empty_state("file-off", "No audit records found for this run.", "This run may predate the audit trail, or its entries were pruned.") }}
+{% endif %}
+
+{% endblock %}

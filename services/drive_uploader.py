@@ -1,6 +1,8 @@
 import io
 import json
 import os
+import zipfile
+from pathlib import Path
 from dotenv import load_dotenv
 from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
@@ -131,6 +133,81 @@ def upload_bytes(filename: str, content: bytes, mime_type: str, folder_id: str) 
         service.files().create(body={"name": filename, "parents": [folder_id]}, media_body=media).execute()
     except Exception as e:
         log.error(f"Drive upload failed [{filename}]: {e}")
+
+
+def list_data_folder_files(folder_id: str) -> list:
+    """
+    Lists every file in the shared Drive data folder. Each teammate's app
+    uploads its own '<file>_<TEAM_MEMBER_ID>.json' — there is no merged view
+    on Drive itself, so callers group these by member suffix themselves
+    (see main.py /team-reports). Returns [] if uploads are disabled/unset.
+    """
+    if not folder_id:
+        return []
+    service = _get_service()
+    if not service:
+        return []
+    files, page_token = [], None
+    try:
+        while True:
+            resp = service.files().list(
+                q=f"'{folder_id}' in parents and trashed = false",
+                fields="nextPageToken, files(id, name, modifiedTime, size)",
+                pageToken=page_token,
+            ).execute()
+            files.extend(resp.get("files", []))
+            page_token = resp.get("nextPageToken")
+            if not page_token:
+                break
+        return files
+    except Exception as e:
+        log.error(f"Drive list failed [folder={folder_id}]: {e}")
+        return []
+
+
+def download_file(file_id: str) -> bytes | None:
+    """Downloads a Drive file's raw bytes. Returns None on any failure."""
+    if not file_id:
+        return None
+    service = _get_service()
+    if not service:
+        return None
+    try:
+        return service.files().get_media(fileId=file_id).execute()
+    except Exception as e:
+        log.error(f"Drive download failed [{file_id}]: {e}")
+        return None
+
+
+def upload_run_archive(run_id: str, raw_news_path: Path, snapshots_dir: Path, folder_id: str) -> None:
+    """
+    Backs up the two per-run stores that are otherwise local-only and never
+    covered by the flat data-file upload in main.py's _publish_run_to_drive():
+      - raw_news/<run_id>.json           — uploaded as-is (already one file per run)
+      - pipeline_snapshots/<run_id>/      — zipped (many small per-entity files)
+    Each run_id is unique, so these are created once and never overwritten —
+    unlike upsert_bytes for the per-person cumulative files.
+    """
+    if not folder_id:
+        return
+
+    if raw_news_path.exists():
+        try:
+            upload_bytes(f"raw_news_{run_id}.json", raw_news_path.read_bytes(),
+                        "application/json", folder_id)
+        except Exception as e:
+            log.error(f"Drive raw_news upload failed [{run_id}]: {e}")
+
+    if snapshots_dir.exists() and any(snapshots_dir.iterdir()):
+        try:
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                for f in snapshots_dir.rglob("*.json"):
+                    zf.write(f, arcname=f.name)
+            upload_bytes(f"snapshots_{run_id}.zip", buf.getvalue(),
+                        "application/zip", folder_id)
+        except Exception as e:
+            log.error(f"Drive snapshots upload failed [{run_id}]: {e}")
 
 
 def upsert_bytes(filename: str, content: bytes, mime_type: str, folder_id: str) -> None:

@@ -99,13 +99,22 @@ def save_news_for_entity(entity_id: str, items: List[NewsItem]):
     data = _load(DATA_FILE)
     data.setdefault("news", {})
 
-    # Merge by period: preserve articles from other periods, replace only the
-    # period(s) present in the incoming batch. Without this, a 7-day re-run
-    # would wipe all articles from previous 30-day runs for the same entity.
+    # Merge by (period, fetch_source): preserve articles from other periods,
+    # and preserve articles from sources this batch didn't touch, replacing
+    # only the (period, source) pairs actually present in the incoming batch.
+    # Replacing by period alone would let a rerun of the SAME 7-day window
+    # with a DIFFERENT api_sources selection silently wipe the previous
+    # source's already-accepted articles for that period instead of
+    # accumulating across sources — see CLAUDE.md root-cause notes.
     incoming_periods = {i.period for i in items if i.period}
     if incoming_periods:
+        incoming_sources = {i.fetch_source for i in items if i.fetch_source}
         existing = data["news"].get(entity_id, [])
-        kept = [e for e in existing if e.get("period", "") not in incoming_periods]
+        kept = [
+            e for e in existing
+            if not (e.get("period", "") in incoming_periods
+                    and e.get("fetch_source", "") in incoming_sources)
+        ]
         data["news"][entity_id] = kept + [i.model_dump() for i in items]
     else:
         # No period set on any incoming item — preserve existing articles rather

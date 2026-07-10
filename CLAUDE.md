@@ -7,7 +7,7 @@ Internal news intelligence tool that automates fetching, deduplicating, validati
 ## How to Run
 
 ```bash
-cd d:\Code\news_digest
+cd d:\news_digest
 .venv\Scripts\activate
 uvicorn main:app --reload
 # App opens at http://localhost:8000
@@ -30,11 +30,11 @@ news_digest/
 │   ├── hyperlink_validator.py  # 4-layer URL reachability check (client/prospect pipeline)
 │   ├── ai_summarizer.py    # GPT-4o-mini: relevance gate + 2–3 sentence summary + 12-category tagging (client/prospect)
 │   ├── industry_validator.py   # Industry-only AI validation: HTTP check + OpenAI web search + chat categorisation
-│   ├── excel_exporter.py   # 5-sheet openpyxl Excel report
-│   └── drive_uploader.py   # Uploads full data/export/log copies to shared Google Drive (Team Reports)
+│   ├── excel_exporter.py   # Multi-sheet openpyxl Excel reports — every article-listing sheet has a per-period "News ID" serial column
+│   └── drive_uploader.py   # Uploads full data/export/log copies to shared Google Drive (Team Reports); also lists/downloads for /team-reports
 ├── scripts/
 │   └── authorize_drive.py  # One-time OAuth login for Team Reports — run manually, never by the app itself
-├── templates/              # Jinja2 HTML: base, index, digest, industry, gaps, audit, run_history
+├── templates/              # Jinja2 HTML: base, index, digest, industry, gaps, audit, run_history, run_detail, team_reports
 ├── static/app.js           # Auto-polls /job-status and reloads page on completion
 ├── requirements.txt
 ├── .env                    # API keys — never committed
@@ -53,8 +53,10 @@ news_digest/
 | GET | `/digest` | News digest — Clients and Prospects only (Industries → `/industry`) |
 | GET | `/industry` | Dedicated industry news page with entity/period filters |
 | GET | `/gaps` | Gap report |
-| GET | `/audit` | Audit log |
+| GET | `/audit` | Audit log (paginated, 500 entries/page — see Storage notes) |
 | GET | `/run-history` | Run history |
+| GET | `/run-history/{run_id}` | Raw / accepted / rejected / duplicate records for one specific run |
+| GET | `/team-reports` | Merged view of every teammate's run totals, read live from the shared Drive folder |
 | POST | `/fetch-all-news` | Trigger full pipeline (all entities, or filtered by `entity_type_filter`) |
 | POST | `/fetch-news/{entity_id}` | Trigger single-entity pipeline |
 | POST | `/ai-validate-industry` | Re-validate stored industry articles using AI (period + sector_id filters optional) |
@@ -154,17 +156,23 @@ Industry articles bypass validator point g and the ai_summarizer relevance gate.
 - Custom range is also capped at yesterday
 - Deduplication handles repeated articles across overlapping runs
 
+### News ID column (per-period serial numbers in reports)
+Every article-listing report sheet (Client/Prospect/Industry Report, Full Analytics, Audit Report, Validation Report) has a leading **News ID** column that restarts at 1 for every distinct run period, so you can see at a glance how many articles a given period produced without counting rows. Implemented via `excel_exporter._next_news_id()` / `_period_label_from_window()` — the latter normalises `AuditEntry.window_from/window_to` (raw ISO dates) to the same `"DD Mon YYYY – DD Mon YYYY"` label `NewsItem.period` already carries, so accepted and rejected/duplicate rows for the *same* real period share one counter (e.g. in the Full Analytics sheet) instead of numbering separately just because the two row types store the period differently.
+
+### Merging accepted articles across runs (storage.save_news_for_entity)
+`data.json` is merged by **(period, fetch_source)**, not by period alone: rerunning a period replaces only the articles from the source(s) actually present in that run's batch, preserving any other source's already-accepted articles for the same period. (Replacing by period alone previously meant rerunning the same window with a different `api_sources` selection silently wiped the prior source's accepted articles for that period.)
+
 ### Storage (Phase 1)
 All persistence is flat JSON files auto-created on first run:
 
 | File / Dir | Contents |
 |------------|----------|
-| `data.json` | Entities + fetched news per entity (all types) |
-| `audit.json` | Every article action with entity_type, fetch_source, window_from/to |
+| `data.json` | Entities + fetched news per entity (all types). Merged by (period, fetch_source) per entity — see above. |
+| `audit.json` | Every article action with entity_type, fetch_source, window_from/to, run_id (run_id populated for entries created after this field was added; older entries have `run_id=""`) |
 | `gap_report.json` | Gap report snapshots per run |
 | `run_history.json` | Duration, counts, status, window_from/to per run |
-| `raw_news/<run_id>.json` | **Permanent** raw API fetch — all articles before dedup/validation, never rotated |
-| `pipeline_snapshots/<run_id>/` | Per-entity stage snapshots (rotated, keep last 5 runs) |
+| `raw_news/<run_id>.json` | **Permanent** raw API fetch — all articles before dedup/validation, never rotated locally. Also backed up to the Drive data folder as `raw_news_<run_id>.json` after each run. |
+| `pipeline_snapshots/<run_id>/` | Per-entity stage snapshots. Rotated locally, keeping the last `SNAPSHOT_RETENTION_RUNS` runs (main.py constant, currently 50 — raised from 5). Also zipped and backed up to the Drive data folder as `snapshots_<run_id>.zip` after each run, so stage-level detail survives local rotation. |
 | `industry_all_records.json` | All industry articles post-hyperlink-check, with `content` field preserved for AI re-use. Populated by pipeline; read by AI Validation. |
 | `industry_accepted.json` | Articles with `validation_status = "Validated News"` from last AI Validation run |
 | `industry_rejected.json` | Articles with `validation_status = "Non Validated News"` from last AI Validation run |
@@ -172,15 +180,21 @@ All persistence is flat JSON files auto-created on first run:
 
 All JSON files are gitignored. Safe to delete to reset data.
 
+Per-run detail (raw fetch + accepted/rejected/duplicate breakdown) is browsable in-app at `/run-history/{run_id}` — linked from each row's "Started" timestamp on `/run-history` — instead of only being readable by opening the JSON files directly. For runs from before `AuditEntry.run_id` existed, this page falls back to matching audit entries by `run_date` + exact `window_from`/`window_to`.
+
+`/audit` is paginated (500 entries/page, newest first) rather than only ever showing the most recent 500 — older run periods stay reachable via the pager instead of disappearing once total entries pass 500.
+
 ### Team Reports (shared Google Drive)
 
 Every team member runs their own local copy of this app — there is no shared server or shared drive, so each person's JSON files above are entirely separate. To give the whole team (including new members) visibility into everyone's full results, the app uploads complete, untrimmed copies of its data files, generated Excel exports, and technical logs to one shared Google account's Drive via the Drive API (`services/drive_uploader.py`). Nothing is summarized or trimmed — full article content, full audit trail, everything stays in.
 
-- **Data folder** (`GOOGLE_DRIVE_DATA_FOLDER_ID`): after every pipeline run, full copies of `data.json`, `audit.json`, `gap_report.json`, `run_history.json`, `error_log.json`, `industry_all_records.json`, `industry_accepted.json`, `industry_rejected.json` are uploaded, each named `<file>_<TEAM_MEMBER_ID>.json` so they never collide with a teammate's own upload. Re-uploaded in place (update, not a new file) each run via `upsert_bytes`.
+- **Data folder** (`GOOGLE_DRIVE_DATA_FOLDER_ID`): after every pipeline run, full copies of `data.json`, `audit.json`, `gap_report.json`, `run_history.json`, `error_log.json`, `industry_all_records.json`, `industry_accepted.json`, `industry_rejected.json` are uploaded, each named `<file>_<TEAM_MEMBER_ID>.json` so they never collide with a teammate's own upload. Re-uploaded in place (update, not a new file) each run via `upsert_bytes`. That run's `raw_news/<run_id>.json` and zipped `pipeline_snapshots/<run_id>/` are also uploaded (as `raw_news_<run_id>.json` / `snapshots_<run_id>.zip`, created once via `upload_bytes` — not upserted, since `run_id` is unique) since those two stores aren't part of the per-person cumulative files above and aren't otherwise backed up anywhere.
 - **Exports folder** (`GOOGLE_DRIVE_EXPORTS_FOLDER_ID`): every generated Excel export (`/export/*` routes) is also uploaded, in addition to the normal browser download, queued via `BackgroundTasks` so it never delays the user's download.
 - **Logs folder** (`GOOGLE_DRIVE_LOGS_FOLDER_ID`): full copies of `logs/app.log`, `errors.log`, `pipeline.log`, `audit.log`, named `<TEAM_MEMBER_ID>_<file>.log`, refreshed once per pipeline run.
 
 **Why per-person files instead of one shared file:** Drive has no cross-process file locking. If every teammate's app wrote into the *same* shared `data.json`, concurrent writes could silently overwrite each other. Keeping each person's full files under their own name means nobody's upload ever collides — full detail, zero merge risk.
+
+**Viewing everyone's data in one place:** because uploads are per-person and never merged on Drive itself, `/team-reports` reads the Drive data folder live, groups files by their `_<member>` suffix, and shows each member's run totals side by side — so you don't need to know a teammate's `TEAM_MEMBER_ID` suffix to find their runs.
 
 **One-time setup** (done once by whoever administers the shared Google account):
 1. Enable the Drive API in Google Cloud Console for a project under that account.
@@ -225,7 +239,7 @@ Every team member runs their own local copy of this app — there is no shared s
 - `EntityType` enum: `client | prospect | industry`
 - `Entity`: id, name, entity_type, topics (optional list), website (optional), industry_type (optional), news_scope (optional — plain-English description of what the sector covers; used as the primary guide for AI sector matching in industry_validator.py), aliases (optional list)
 - `NewsItem`: title, url, source, published_date, fetched_date, period, summary, primary_category, secondary_category, entity_id, entity_type, url_status, original_url, paywall_note, topic_queried, is_primary_topic, fetch_source, validation_status (`None` | `"Validated News"` | `"Non Validated News"` | `"Review"`), validation_reason, industry_type, content
-- `AuditEntry`: run_date, entity_id, entity_name, entity_type, article_title, action, reason, source_url, fetch_source, window_from, window_to
+- `AuditEntry`: run_date, entity_id, entity_name, entity_type, article_title, action, reason, source_url, fetch_source, window_from, window_to, run_id (added so a specific pipeline run's entries can be isolated exactly — see `/run-history/{run_id}`; empty string on entries created before this field existed)
 - `TOPIC_CATEGORIES`: hardcoded list of 12 business topic categories used for fetching and AI categorisation
 
 ---

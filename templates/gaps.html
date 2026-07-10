@@ -37,7 +37,7 @@
       <option value="{{ loop.index0 }}" {% if loop.index0 == selected_idx %}selected{% endif %}>
         {% if loop.index0 == 0 %}★ Latest — {% endif %}
         {{ rpt.started_at or rpt.run_date }}
-        {% if rpt.window %} · {{ rpt.window.from }} → {{ rpt.window.to }}{% endif %}
+        {% if rpt.window %} · {{ rpt.window.from | pretty_date }} → {{ rpt.window.to | pretty_date }}{% endif %}
         {% if rpt.entity_name %} · {{ rpt.entity_name }}{% endif %}
         ({% if rpt.total_articles is defined %}{{ rpt.total_articles }} accepted{% else %}run{% endif %})
       </option>
@@ -65,7 +65,7 @@
       <div style="font-size:10px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:4px">Report Period</div>
       {% if gap_report.window %}
       <div style="font-size:13px;font-weight:700;color:#1E40AF">
-        {{ gap_report.window.from or '—' }} <span style="color:#93C5FD;margin:0 5px">→</span> {{ gap_report.window.to or '—' }}
+        {{ gap_report.window.from | pretty_date if gap_report.window.from else '—' }} <span style="color:#93C5FD;margin:0 5px">→</span> {{ gap_report.window.to | pretty_date if gap_report.window.to else '—' }}
         {% if gap_report.window.days is defined %}
         <span style="font-size:11px;font-weight:400;color:#60A5FA;margin-left:6px">({{ gap_report.window.days }}d)</span>
         {% endif %}

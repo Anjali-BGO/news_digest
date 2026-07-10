@@ -18,17 +18,25 @@ get_entities, save_entity, delete_entity,
 save_news_for_entity, get_all_news,
 get_audit_log, save_gap_report, get_latest_gap_report, get_all_gap_reports,
 save_run, log_error, get_run_history, append_audit,
-save_raw_articles, list_raw_runs, backfill_audit_entries,
+save_raw_articles, list_raw_runs, backfill_audit_entries, get_raw_run,
 save_industry_run_records, get_industry_all_records, save_industry_all_records,
 save_industry_accepted, save_industry_rejected, update_industry_validation_status,
 DATA_FILE, AUDIT_FILE, GAP_FILE, RUN_FILE, ERROR_FILE,
 INDUSTRY_ALL_RECORDS_FILE, INDUSTRY_ACCEPTED_FILE, INDUSTRY_REJECTED_FILE,
+RAW_NEWS_DIR, SNAPSHOTS_DIR,
 )
-from services.drive_uploader import upload_bytes, upsert_bytes, startup_check as drive_startup_check
+from services.drive_uploader import (
+upload_bytes, upsert_bytes, upload_run_archive, startup_check as drive_startup_check,
+)
 from logger import get_logger, get_pipeline_logger, LOG_DIR
 
 log = get_logger("main")
 pipe_log = get_pipeline_logger()
+
+# Pipeline runs kept in pipeline_snapshots/ before older ones are rotated away.
+# Raised from 5 so per-stage detail survives more than a day of normal usage —
+# raw_news/ and audit.json stay permanent regardless of this setting.
+SNAPSHOT_RETENTION_RUNS = 50
 
 app = FastAPI(title="News Digest Platform")
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -121,6 +129,29 @@ f'style="color:#2563EB;text-decoration:none;font-weight:500">{safe}</a>'
 templates.env.filters["source_link"] = _source_link
 
 
+def _pretty_date(iso_str: str) -> str:
+    """
+    Reformats a YYYY-MM-DD date string to 'DD Mon YYYY' — the same style as the
+    pre-built period label from services.news_fetcher.resolve_window (dfmt).
+    Run period dates get stored two ways across the app: NewsItem.period /
+    run_history's window_label carry the pre-formatted label, while
+    AuditEntry.window_from/window_to (and some run_history/gap_report reads)
+    carry raw ISO dates — showing the raw ISO value directly produced two
+    different-looking date formats for the same underlying period. Templates
+    should always pass window_from/window_to through this filter so every
+    view renders the same style.
+    """
+    if not iso_str:
+        return iso_str
+    try:
+        return datetime.strptime(iso_str, "%Y-%m-%d").strftime("%d %b %Y")
+    except ValueError:
+        return iso_str  # not a plain ISO date (already formatted, or unparseable) — show as-is
+
+
+templates.env.filters["pretty_date"] = _pretty_date
+
+
 def _standardize_reason(action: str, reason: str) -> str:
     """Map a raw audit action+reason to a standardized rejection category label."""
     if action == "duplicate_removed":
@@ -177,12 +208,17 @@ _DATA_FILES_TO_PUBLISH = [
 _LOG_FILES_TO_PUBLISH = ["app.log", "errors.log", "pipeline.log", "audit.log"]
 
 
-def _publish_run_to_drive() -> None:
+def _publish_run_to_drive(run_id: str | None = None) -> None:
     """
     Upload full, untrimmed copies of this machine's data files and technical
     logs to the shared Google account's Drive, namespaced by TEAM_MEMBER_ID so
     they never collide with a teammate's own upload. No-ops (with a one-time
     warning) if GOOGLE_DRIVE_*_FOLDER_ID / TEAM_MEMBER_ID aren't configured.
+
+    When run_id is given, also backs up that run's raw_news/<run_id>.json and
+    pipeline_snapshots/<run_id>/ — the two per-run stores that aren't part of
+    _DATA_FILES_TO_PUBLISH and are otherwise local-only (pipeline_snapshots is
+    rotated away entirely after SNAPSHOT_RETENTION_RUNS runs).
     """
     member = os.getenv("TEAM_MEMBER_ID", "unknown")
     data_folder = os.getenv("GOOGLE_DRIVE_DATA_FOLDER_ID", "")
@@ -196,6 +232,14 @@ def _publish_run_to_drive() -> None:
         path = LOG_DIR / log_file
         if path.exists():
             upsert_bytes(f"{member}_{log_file}", path.read_bytes(), "text/plain", logs_folder)
+
+    if run_id:
+        upload_run_archive(
+            run_id,
+            RAW_NEWS_DIR / f"{run_id}.json",
+            SNAPSHOTS_DIR / run_id,
+            data_folder,
+        )
 
 # ── In-memory job status ───────────────────────────────────────────────────────
 job_status: dict = {
@@ -323,6 +367,24 @@ f"/?msg=duplicate&name={quote_plus(name)}&type={entity_type}", status_code=303
 
 
     # ── Upload CSV / Excel ─────────────────────────────────────────────────────────
+# Alternate header names accepted for bulk entity upload, mapped to the
+# canonical columns the app reads (name, type, industry_type, news_scope, topics).
+# "industry" maps to name, not industry_type — in industry-only upload files the
+# industry/sector name (e.g. "Healthcare IT") IS the entity's name column.
+_UPLOAD_COLUMN_ALIASES = {
+    "company entity":       "name",
+    "company name":         "name",
+    "entity name":           "name",
+    "industry":              "name",
+    "entity type":           "type",
+    "company type":          "type",
+    "news type":             "type",
+    "sector":                "industry_type",
+    "scope":                 "news_scope",
+    "topic categorization":  "topics",
+}
+
+
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     filename = file.filename or ""
@@ -342,14 +404,27 @@ async def upload_file(file: UploadFile = File(...)):
        return RedirectResponse("/?msg=upload&added=0&skipped=0&invalid=0&error=empty", status_code=303)
 
     try:
-       df = pd.read_csv(io.BytesIO(contents)) \
-     if filename.lower().endswith(".csv") \
-     else pd.read_excel(io.BytesIO(contents))
+       if filename.lower().endswith(".csv"):
+          # Excel's "CSV" export often uses the Windows ANSI codepage (cp1252) rather
+          # than UTF-8, especially once the file contains en/em dashes or curly quotes.
+          try:
+             df = pd.read_csv(io.BytesIO(contents), encoding="utf-8-sig")
+          except UnicodeDecodeError:
+             df = pd.read_csv(io.BytesIO(contents), encoding="cp1252")
+       else:
+          df = pd.read_excel(io.BytesIO(contents))
     except Exception as e:
        log.error(f"File parse error: {e}")
        return RedirectResponse("/?msg=upload&added=0&skipped=0&invalid=0&error=parse", status_code=303)
 
     df.columns = [c.strip().lower() for c in df.columns]
+    # Only remap an alias if its canonical target isn't already a real column in
+    # the file — otherwise a file with both "name" and "industry" columns would
+    # have "industry" silently clobber the genuine name column.
+    df = df.rename(columns={
+        c: _UPLOAD_COLUMN_ALIASES[c] for c in df.columns
+        if c in _UPLOAD_COLUMN_ALIASES and _UPLOAD_COLUMN_ALIASES[c] not in df.columns
+    })
     if not {"name", "type"}.issubset(set(df.columns)):
        return RedirectResponse("/?msg=upload&added=0&skipped=0&invalid=0&error=missing_cols", status_code=303)
 
@@ -776,7 +851,7 @@ async def gap_view(request: Request, run_idx: int = 0):
 
     # ── Audit log view ─────────────────────────────────────────────────────────────
 @app.get("/audit", response_class=HTMLResponse)
-async def audit_view(request: Request, tab: str = "all"):
+async def audit_view(request: Request, tab: str = "all", page: int = 1):
     all_entries = get_audit_log()
     # Count per entity type across all entries
     type_counts = {"all": len(all_entries), "client": 0, "prospect": 0, "industry": 0}
@@ -790,13 +865,21 @@ async def audit_view(request: Request, tab: str = "all"):
     else:
         tab = "all"
         filtered = all_entries
-    total_count = len(filtered)
-    limit  = 500
-    entries = list(reversed(filtered[-limit:] if total_count > limit else filtered))
 
-    # Unique API sources present in this set (for JS filter dropdown)
+    total_count = len(filtered)
+    limit       = 500
+    # Real pagination (not just "last 500") — otherwise older run periods become
+    # permanently unreachable in the UI once a tab passes 500 entries, even
+    # though audit.json / Drive still have them in full.
+    total_pages = max(1, -(-total_count // limit))  # ceil division
+    page        = max(1, min(page, total_pages))
+    newest_first = list(reversed(filtered))
+    start        = (page - 1) * limit
+    entries      = newest_first[start:start + limit]
+
+    # Unique API sources present in this page (for JS filter dropdown)
     api_sources_present = sorted({(e.fetch_source or "").strip() for e in entries if e.fetch_source})
-    # Unique run dates present (newest first)
+    # Unique run dates present in this page (newest first)
     run_dates_present = sorted({e.run_date for e in entries if e.run_date}, reverse=True)
 
     return templates.TemplateResponse(
@@ -807,6 +890,8 @@ async def audit_view(request: Request, tab: str = "all"):
             "entries":          entries,
             "total_count":      total_count,
             "limit":            limit,
+            "page":             page,
+            "total_pages":      total_pages,
             "active_tab":       tab,
             "type_counts":      type_counts,
             "api_sources":      api_sources_present,
@@ -948,6 +1033,143 @@ async def run_history_view(request: Request):
             "total_tokens":  total_tokens,
             "accept_rate":   accept_rate,
             "api_usage":     api_usage,
+        }
+    )
+
+
+    # ── Run detail: raw / accepted / rejected / duplicate records for one run ──────
+@app.get("/run-history/{run_id}", response_class=HTMLResponse)
+async def run_history_detail(request: Request, run_id: str):
+    runs = get_run_history()
+    run  = next((r for r in runs if r.get("run_id") == run_id), None)
+    if not run:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+
+    raw_data     = get_raw_run(run_id) or {}
+    raw_entities = sorted(
+        raw_data.get("entities", {}).values(),
+        key=lambda e: e.get("name", ""),
+    )
+    total_raw_in_file = sum(e.get("article_count", 0) for e in raw_entities)
+
+    all_audit = get_audit_log()
+    # run_id is only populated on entries created after this field was added —
+    # fall back to matching run_date + exact window for older runs.
+    run_entries = [e for e in all_audit if e.run_id == run_id]
+    if not run_entries:
+        run_entries = [
+            e for e in all_audit
+            if e.run_date == run.get("run_date")
+            and e.window_from == run.get("window_from")
+            and e.window_to == run.get("window_to")
+        ]
+    used_fallback_match = bool(run_entries) and not any(e.run_id == run_id for e in run_entries)
+
+    accepted    = [e for e in run_entries if e.action == "accepted"]
+    rejected    = [e for e in run_entries if e.action == "validation_rejected"]
+    duplicate   = [e for e in run_entries if e.action == "duplicate_removed"]
+    url_invalid = [e for e in run_entries if e.action == "url_invalid"]
+    other       = [e for e in run_entries
+                   if e.action not in ("accepted", "validation_rejected", "duplicate_removed", "url_invalid")]
+
+    has_snapshots = (SNAPSHOTS_DIR / run_id).exists() and any((SNAPSHOTS_DIR / run_id).iterdir())
+
+    # Single shared "News ID" counter across every section — this whole page is
+    # one run (one period), so it numbers every article for that run 1..N.
+    _news_id = 0
+    def _numbered(entries):
+        nonlocal _news_id
+        numbered = []
+        for e in entries:
+            _news_id += 1
+            numbered.append((_news_id, e))
+        return numbered
+
+    return templates.TemplateResponse(
+        request=request,
+        name="run_detail.html",
+        context={
+            "request":            request,
+            "run":                run,
+            "raw_entities":       raw_entities,
+            "total_raw_in_file":  total_raw_in_file,
+            "has_raw_file":       bool(raw_data),
+            "accepted":           _numbered(accepted),
+            "rejected":           _numbered(rejected),
+            "duplicate":          _numbered(duplicate),
+            "url_invalid":        _numbered(url_invalid),
+            "other":              _numbered(other),
+            "used_fallback_match": used_fallback_match,
+            "has_snapshots":      has_snapshots,
+            "job_status":         job_status,
+        }
+    )
+
+
+    # ── Team Reports: merged cross-teammate view from shared Drive ─────────────────
+@app.get("/team-reports", response_class=HTMLResponse)
+async def team_reports_view(request: Request):
+    """
+    Each teammate's app uploads its own '<file>_<TEAM_MEMBER_ID>.json' to the
+    shared Drive data folder — there's no merged file on Drive itself, so a
+    teammate who isn't the one who ran a given pipeline has no way to see it
+    without knowing to open someone else's namespaced file. This page lists
+    every member found in the Drive folder and their run_history totals in
+    one place.
+    """
+    import json as _json
+    from services.drive_uploader import list_data_folder_files, download_file
+
+    data_folder = os.getenv("GOOGLE_DRIVE_DATA_FOLDER_ID", "")
+    files = list_data_folder_files(data_folder)
+
+    # Group by member suffix: "<base>_<member>.<ext>" e.g. "run_history_nida.json".
+    # Only match the known per-person cumulative file bases — "raw_news_<run_id>.json"
+    # and "snapshots_<run_id>.zip" are run-scoped (not person-scoped) and would
+    # otherwise be mis-parsed as junk "members" by the same suffix-splitting logic.
+    _KNOWN_BASES = {p.stem for p in _DATA_FILES_TO_PUBLISH}
+    members: dict = {}
+    for f in files:
+        name = f.get("name", "")
+        stem = name.rsplit(".", 1)[0] if "." in name else name
+        if "_" not in stem:
+            continue
+        base, member = stem.rsplit("_", 1)
+        if base not in _KNOWN_BASES:
+            continue
+        members.setdefault(member, {})[base] = f
+
+    team_rows = []
+    for member, member_files in sorted(members.items()):
+        rh_file = member_files.get("run_history")
+        runs = []
+        if rh_file:
+            content = download_file(rh_file.get("id", ""))
+            if content:
+                try:
+                    parsed = _json.loads(content)
+                    runs = parsed if isinstance(parsed, list) else []
+                except Exception as e:
+                    log_error("team_reports.parse_run_history", str(e), member)
+        team_rows.append({
+            "member":         member,
+            "total_runs":     len(runs),
+            "total_raw":      sum(r.get("raw_fetched", 0) for r in runs),
+            "total_accepted": sum(r.get("total_articles", 0) for r in runs),
+            "total_dupes":    sum(r.get("duplicates_removed", 0) for r in runs),
+            "total_rejected": sum(r.get("articles_rejected", 0) for r in runs),
+            "latest_run":     max((r.get("started_at", "") for r in runs), default=""),
+            "files":          sorted(member_files.keys()),
+        })
+
+    return templates.TemplateResponse(
+        request=request,
+        name="team_reports.html",
+        context={
+            "request":          request,
+            "team_rows":        team_rows,
+            "drive_configured": bool(data_folder),
+            "job_status":       job_status,
         }
     )
 
@@ -1260,7 +1482,7 @@ def _make_news_item(art: dict, result: dict, entity, window: dict) -> NewsItem:
 
 
 def _build_rejection_audit_entries(entity, dup_log: list, val_log: list,
-                                   linked: list, window: dict) -> list:
+                                   linked: list, window: dict, run_id: str = "") -> list:
     """Return AuditEntry objects for all duplicate/validation/hyperlink rejections."""
     today      = datetime.now().strftime("%Y-%m-%d")
     win_from   = window.get("from", "")
@@ -1274,7 +1496,7 @@ def _build_rejection_audit_entries(entity, dup_log: list, val_log: list,
             article_title=d["title"], action="duplicate_removed",
             reason=d["reason"], source_url=d.get("url", ""),
             fetch_source=d.get("fetch_source", ""),
-            window_from=win_from, window_to=win_to,
+            window_from=win_from, window_to=win_to, run_id=run_id,
         ))
     for v in val_log:
         entries.append(AuditEntry(
@@ -1283,7 +1505,7 @@ def _build_rejection_audit_entries(entity, dup_log: list, val_log: list,
             article_title=v["title"], action="validation_rejected",
             reason=v["reason"], source_url=v.get("url", ""),
             fetch_source=v.get("fetch_source", ""),
-            window_from=win_from, window_to=win_to,
+            window_from=win_from, window_to=win_to, run_id=run_id,
         ))
     for a in linked:
         if a.get("url_status") in ("invalid", "unknown"):
@@ -1294,12 +1516,12 @@ def _build_rejection_audit_entries(entity, dup_log: list, val_log: list,
                 reason=f"URL status: {a.get('url_status')} — {a.get('url', '')}",
                 source_url=a.get("url", ""),
                 fetch_source=a.get("fetch_source", ""),
-                window_from=win_from, window_to=win_to,
+                window_from=win_from, window_to=win_to, run_id=run_id,
             ))
     return entries
 
 
-def _build_accepted_audit_entries(entity, news_items: list, today: str, window: dict) -> list:
+def _build_accepted_audit_entries(entity, news_items: list, today: str, window: dict, run_id: str = "") -> list:
     """Return AuditEntry objects for every article that passed all pipeline checks."""
     win_from = window.get("from", "")
     win_to   = window.get("to", "")
@@ -1311,7 +1533,7 @@ def _build_accepted_audit_entries(entity, news_items: list, today: str, window: 
             article_title=item.title, action="accepted",
             reason="Passed all checks", source_url=item.url,
             fetch_source=item.fetch_source or "",
-            window_from=win_from, window_to=win_to,
+            window_from=win_from, window_to=win_to, run_id=run_id,
         )
         for item in news_items
     ]
@@ -1349,6 +1571,7 @@ def _build_industry_validation_audit_entries(updated: list, window: dict) -> lis
             source_url=rec.get("url", ""),
             fetch_source=rec.get("fetch_source", ""),
             window_from=win_from, window_to=win_to,
+            run_id=rec.get("run_id", ""),
         ))
     return entries
 
@@ -1562,7 +1785,7 @@ async def _run_full_pipeline_body(window: dict, entity_type_filter: str = "all",
 
     started_at = datetime.now()
     run_id     = started_at.strftime("%Y-%m-%d_%H-%M-%S")
-    rotate_snapshots(keep=5)   # keep last 5 runs; remove older ones
+    rotate_snapshots(keep=SNAPSHOT_RETENTION_RUNS)
     entities   = _filtered_entities(entity_type_filter)
     audit_entries  = []
     entity_results = []
@@ -1682,7 +1905,7 @@ f"{a.get('title','')[:80]} | {a.get('url','')}"
               industry_records_this_run.extend(ind_records)
 
           # 5. Audit entries — dedup + validation + hyperlink rejections
-          audit_entries.extend(_build_rejection_audit_entries(entity, dup_log, val_log, linked, window))
+          audit_entries.extend(_build_rejection_audit_entries(entity, dup_log, val_log, linked, window, run_id=run_id))
           today = datetime.now().strftime("%Y-%m-%d")
 
           # 6. Summarise + categorise
@@ -1723,8 +1946,8 @@ f"{a.get('title','')[:80]} | {a.get('url','')}"
 
           # 7b. Audit entries — AI-rejected + every accepted/saved article
           if ai_rejected:
-             audit_entries.extend(_build_rejection_audit_entries(entity, [], ai_rejected, [], window))
-          audit_entries.extend(_build_accepted_audit_entries(entity, news_items, today, window))
+             audit_entries.extend(_build_rejection_audit_entries(entity, [], ai_rejected, [], window, run_id=run_id))
+          audit_entries.extend(_build_accepted_audit_entries(entity, news_items, today, window, run_id=run_id))
 
           pipe_log.info(f"Done: {entity.name} — {len(news_items)} articles saved")
 
@@ -1798,7 +2021,7 @@ f"{a.get('title','')[:80]} | {a.get('url','')}"
    "exhausted_sources": sorted(exhausted_sources),
 })
 
-    _publish_run_to_drive()
+    _publish_run_to_drive(run_id)
 
     was_cancelled = job_status["cancel"]   # capture before clearing
     exhausted_msg = (
@@ -1846,7 +2069,7 @@ async def _run_entity_pipeline_body(entity, window: dict, api_sources: list | No
 
     started_at = datetime.now()
     run_id     = started_at.strftime("%Y-%m-%d_%H-%M-%S")
-    rotate_snapshots(keep=5)
+    rotate_snapshots(keep=SNAPSHOT_RETENTION_RUNS)
     total_ai_calls = 0
     total_ai_retries= 0
     total_prompt_tokens = 0
@@ -1953,7 +2176,7 @@ f"{a.get('title','')[:80]}"
 
     # Build audit entries for every rejection
     today         = datetime.now().strftime("%Y-%m-%d")
-    audit_entries = _build_rejection_audit_entries(entity, dup_log, val_log, linked, window)
+    audit_entries = _build_rejection_audit_entries(entity, dup_log, val_log, linked, window, run_id=run_id)
 
     pipe_log.info(
    f"  {entity.name}: {len(raw)} raw | {len(dup_log)} dupes | "
@@ -1991,8 +2214,8 @@ f"{a.get('title','')[:80]}"
 
     # Audit — AI-rejected + accepted articles + all rejections
     if ai_rejected:
-       audit_entries.extend(_build_rejection_audit_entries(entity, [], ai_rejected, [], window))
-    audit_entries.extend(_build_accepted_audit_entries(entity, news_items, today, window))
+       audit_entries.extend(_build_rejection_audit_entries(entity, [], ai_rejected, [], window, run_id=run_id))
+    audit_entries.extend(_build_accepted_audit_entries(entity, news_items, today, window, run_id=run_id))
 
     if audit_entries:
        try:
@@ -2052,7 +2275,7 @@ f"{a.get('title','')[:80]}"
     except Exception as _e:
         log_error("save_gap_report_entity", str(_e))
 
-    _publish_run_to_drive()
+    _publish_run_to_drive(run_id)
 
     industry_msg = (
         f" | industry: {industry_validation['validated']} validated / "

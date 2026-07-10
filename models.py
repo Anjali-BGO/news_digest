@@ -95,4 +95,5 @@ class AuditEntry(BaseModel):
     fetch_source:  Optional[str] = ""   # "tavily" | "serpapi" | "newsdata" | "newsai"
     window_from:   Optional[str] = ""   # report period start YYYY-MM-DD
     window_to:     Optional[str] = ""   # report period end YYYY-MM-DD
+    run_id:        Optional[str] = ""   # pipeline run_id — lets a specific run's entries be isolated exactly
     
